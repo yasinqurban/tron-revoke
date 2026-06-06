@@ -99,6 +99,18 @@
     font-family: monospace;
   }
   .copy-field button { width: auto; padding: 10px 16px; font-size: 13px; }
+  .sec-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+  .sec-text { font-size: 13px; color: var(--muted); }
+  .sec-text b { color: var(--text); }
+  .step { display: flex; align-items: flex-start; gap: 10px;
+          font-size: 13px; margin-bottom: 10px; color: var(--muted); }
+  .step:last-child { margin-bottom: 0; }
+  .step b { color: var(--text); }
+  .step-no {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--blue); color: #fff; font-weight: 700;
+    font-size: 12px; display: flex; align-items: center; justify-content: center;
+  }
 </style>
 </head>
 <body>
@@ -106,6 +118,42 @@
   <div class="logo">🔐</div>
   <h1>Approve İptal</h1>
   <div class="subtitle">TRON ağı · TronLink ile imzalanır</div>
+
+  <!-- Açıklama (parametresiz açılırsa) -->
+  <div id="landing" class="hidden">
+    <div class="box">
+      <div class="sec-title">🛡️ Bu araç ne işe yarar?</div>
+      <p class="sec-text">
+        TRON ağında bir token'a verdiğin <b>harcama yetkisini (approve)</b>
+        geri alır. Özellikle <span class="badge danger">Unlimited</span>
+        approve'lar risklidir — kötü niyetli kontratlar bu yetkiyle
+        tokenlarını çekebilir. İptal = bu kapıyı kapatmak.
+      </p>
+    </div>
+
+    <div class="box">
+      <div class="sec-title">📲 Nasıl kullanılır?</div>
+      <div class="step"><span class="step-no">1</span>
+        <span>Telegram botuna <b>cüzdan adresini</b> gönder.</span></div>
+      <div class="step"><span class="step-no">2</span>
+        <span>"🔐 Approve İşlemleri" → iptal edeceğin approve'u bul.</span></div>
+      <div class="step"><span class="step-no">3</span>
+        <span>O approve'un <b>🔗 Web</b> butonuna bas → bu sayfa açılır.</span></div>
+      <div class="step"><span class="step-no">4</span>
+        <span><b>TronLink</b> onay popup'ında <b>Onayla</b> → iptal tamam ✅</span></div>
+    </div>
+
+    <div class="box">
+      <div class="sec-title">🔒 Güvenli mi?</div>
+      <p class="sec-text">
+        <b>Evet.</b> İmzalama tamamen TronLink cüzdanında olur. Bu sayfa
+        private key'ini <b>görmez</b>, hiçbir veri <b>toplamaz</b>, tamamen
+        statik ve <b>açık kaynaktır</b>. Yaptığı tek şey
+        <span class="badge danger">approve(spender, 0)</span> işlemini
+        hazırlayıp imzan için cüzdanına sunmaktır.
+      </p>
+    </div>
+  </div>
 
   <!-- Detay kutusu -->
   <div id="details" class="box hidden">
@@ -309,9 +357,10 @@ async function init() {
   $("url-field").value = window.location.href;
   $("footer-hint").textContent = "Bu sayfa private key görmez. İmzalama tamamen TronLink içinde olur.";
 
-  // Parametre doğrulama
+  // Parametresiz açılış → açıklama göster
   if (!TOKEN || !SPENDER) {
-    setStatus("❌ Eksik parametre. Link 'token' ve 'spender' içermeli.", "error");
+    show("landing");
+    setStatus("ℹ️ Bu sayfa bir revoke linki ile açılmalı (token + spender).", "info");
     return;
   }
   if (!isValidTronAddr(TOKEN) || !isValidTronAddr(SPENDER)) {
