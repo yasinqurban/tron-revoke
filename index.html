@@ -99,6 +99,9 @@
     font-family: monospace;
   }
   .copy-field button { width: auto; padding: 10px 16px; font-size: 13px; }
+  .btn-copy { background: var(--green); margin-bottom: 8px; }
+  .btn-copy:active { background: #18733f; }
+  #url-field { cursor: pointer; }
   .sec-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
   .sec-text { font-size: 13px; color: var(--muted); }
   .sec-text b { color: var(--text); }
@@ -189,10 +192,10 @@
 
   <!-- Kopyalama alanı (TronLink yoksa) -->
   <div id="copy-area" class="hidden">
-    <div class="hint">Bu linki TronLink uygulamasının tarayıcısına yapıştır:</div>
+    <div class="hint">Linki kopyalayıp TronLink uygulamasının tarayıcısına yapıştır:</div>
+    <button id="btn-copy" class="btn-copy" onclick="copyUrl()">📋 Linki Kopyala</button>
     <div class="copy-field">
-      <input id="url-field" readonly>
-      <button class="btn-secondary" onclick="copyUrl()">Kopyala</button>
+      <input id="url-field" readonly onclick="copyUrl()" title="Dokun = kopyala">
     </div>
   </div>
 
@@ -273,14 +276,39 @@ function openInTronLink() {
   }, 1500);
 }
 
-function copyUrl() {
+async function copyUrl() {
   const f = $("url-field");
-  f.select();
-  navigator.clipboard.writeText(f.value).then(() => {
-    setStatus("✅ Link kopyalandı! TronLink tarayıcısına yapıştır.", "success");
-  }).catch(() => {
-    document.execCommand("copy");
-  });
+  const text = f.value || window.location.href;
+  let ok = false;
+
+  // 1) Modern Clipboard API (HTTPS'te çalışır)
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    // 2) Fallback: seç + execCommand
+    try {
+      f.removeAttribute("readonly");
+      f.focus();
+      f.select();
+      f.setSelectionRange(0, 99999);
+      ok = document.execCommand("copy");
+      f.setAttribute("readonly", "");
+    } catch (e2) { ok = false; }
+  }
+
+  const btn = $("btn-copy");
+  if (ok) {
+    if (btn) {
+      btn.textContent = "✅ Kopyalandı!";
+      setTimeout(() => { btn.textContent = "📋 Linki Kopyala"; }, 2500);
+    }
+    setStatus("✅ Link kopyalandı! TronLink tarayıcısının adres çubuğuna yapıştır.", "success");
+  } else {
+    // 3) Son çare: linki seçili bırak, kullanıcı uzun basıp kopyalasın
+    f.focus(); f.select();
+    setStatus("Otomatik kopyalanamadı — linke uzun bas → Kopyala.", "warn");
+  }
 }
 
 // --- Cüzdan bağlama ---
