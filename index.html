@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRON Approve İptal (Revoke)</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --card: #1a2029;
+    --border: #2a3340;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #ff060a;
+    --accent-dark: #c40509;
+    --green: #1f9d55;
+    --blue: #2f81f7;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    line-height: 1.5;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 100%;
+    max-width: 440px;
+    padding: 24px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .logo { text-align: center; font-size: 32px; margin-bottom: 8px; }
+  h1 { font-size: 20px; text-align: center; margin-bottom: 4px; }
+  .subtitle { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+    font-size: 14px; gap: 12px;
+  }
+  .row:last-of-type { border-bottom: none; }
+  .row .label { color: var(--muted); flex-shrink: 0; }
+  .row .value { font-weight: 600; text-align: right; word-break: break-all; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  .box {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+  button {
+    width: 100%;
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    color: #fff;
+  }
+  button:active { transform: scale(0.98); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-revoke { background: var(--accent); }
+  .btn-revoke:hover:not(:disabled) { background: var(--accent-dark); }
+  .btn-connect { background: var(--blue); }
+  .btn-secondary { background: var(--border); color: var(--text); }
+  .status {
+    text-align: center; padding: 14px; border-radius: 12px;
+    margin-top: 16px; font-size: 14px; font-weight: 600;
+  }
+  .status.info { background: rgba(47,129,247,0.15); color: var(--blue); }
+  .status.success { background: rgba(31,157,85,0.15); color: var(--green); }
+  .status.error { background: rgba(255,6,10,0.15); color: var(--accent); }
+  .status.warn { background: rgba(210,153,34,0.15); color: var(--warn); }
+  .hidden { display: none !important; }
+  a { color: var(--blue); text-decoration: none; word-break: break-all; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; text-align: center; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px;
+           font-size: 11px; font-weight: 700; }
+  .badge.danger { background: rgba(255,6,10,0.2); color: var(--accent); }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .copy-field {
+    display: flex; gap: 8px; margin-top: 8px;
+  }
+  .copy-field input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; color: var(--text); font-size: 12px;
+    font-family: monospace;
+  }
+  .copy-field button { width: auto; padding: 10px 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🔐</div>
+  <h1>Approve İptal</h1>
+  <div class="subtitle">TRON ağı · TronLink ile imzalanır</div>
+
+  <!-- Detay kutusu -->
+  <div id="details" class="box hidden">
+    <div class="row">
+      <span class="label">Token</span>
+      <span class="value" id="d-token">—</span>
+    </div>
+    <div class="row">
+      <span class="label">Spender</span>
+      <span class="value" id="d-spender">—</span>
+    </div>
+    <div class="row">
+      <span class="label">Spender Adresi</span>
+      <span class="value mono" id="d-spender-addr">—</span>
+    </div>
+    <div class="row">
+      <span class="label">İşlem</span>
+      <span class="value"><span class="badge danger">approve(spender, 0)</span></span>
+    </div>
+    <div class="row" id="connected-row">
+      <span class="label">Bağlı Cüzdan</span>
+      <span class="value mono" id="d-connected">—</span>
+    </div>
+  </div>
+
+  <!-- Aksiyon butonları -->
+  <button id="btn-connect" class="btn-connect hidden">🔗 Cüzdanı Bağla</button>
+  <button id="btn-revoke" class="btn-revoke hidden" disabled>❌ Onayı İptal Et</button>
+  <button id="btn-open-tronlink" class="btn-connect hidden">📲 TronLink'te Aç</button>
+
+  <!-- Durum mesajı -->
+  <div id="status" class="status info">Yükleniyor…</div>
+
+  <!-- Kopyalama alanı (TronLink yoksa) -->
+  <div id="copy-area" class="hidden">
+    <div class="hint">Bu linki TronLink uygulamasının tarayıcısına yapıştır:</div>
+    <div class="copy-field">
+      <input id="url-field" readonly>
+      <button class="btn-secondary" onclick="copyUrl()">Kopyala</button>
+    </div>
+  </div>
+
+  <div class="hint" id="footer-hint"></div>
+</div>
+
+<script>
+"use strict";
+
+const TRONSCAN_TX = "https://tronscan.org/#/transaction/";
+
+function $(id) { return document.getElementById(id); }
+function show(id) { $(id).classList.remove("hidden"); }
+function hide(id) { $(id).classList.add("hidden"); }
+
+function setStatus(msg, type) {
+  const el = $("status");
+  el.className = "status " + (type || "info");
+  el.innerHTML = msg;
+  show("status");
+}
+
+function shorten(addr) {
+  if (!addr || addr.length < 12) return addr || "—";
+  return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
+// --- URL parametrelerini oku ---
+const params = new URLSearchParams(window.location.search);
+const TOKEN = params.get("token");
+const SPENDER = params.get("spender");
+const LABEL = params.get("label") || "Bilinmeyen Spender";
+const TOKEN_SYMBOL = params.get("symbol") || "Token";
+const OWNER = params.get("owner"); // opsiyonel — beklenen cüzdan
+
+function fillDetails() {
+  $("d-token").textContent = TOKEN_SYMBOL;
+  $("d-spender").textContent = LABEL;
+  $("d-spender-addr").textContent = shorten(SPENDER);
+  show("details");
+}
+
+function isValidTronAddr(a) {
+  return typeof a === "string" && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(a);
+}
+
+// --- TronLink algılama ---
+async function waitForTronWeb(timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (window.tronWeb && window.tronWeb.ready) return window.tronWeb;
+    if (window.tronLink && window.tronWeb) return window.tronWeb;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  return window.tronWeb || null;
+}
+
+function getConnectedAddress() {
+  try {
+    if (window.tronWeb && window.tronWeb.defaultAddress &&
+        window.tronWeb.defaultAddress.base58) {
+      return window.tronWeb.defaultAddress.base58;
+    }
+  } catch (e) {}
+  return null;
+}
+
+// --- TronLink deep link ---
+function openInTronLink() {
+  const dappUrl = window.location.href;
+  const param = encodeURIComponent(JSON.stringify({
+    url: dappUrl, action: "open", protocol: "tronlink", version: "1.0"
+  }));
+  window.location.href = "tronlinkoutside://pull.activity?param=" + param;
+  setTimeout(() => {
+    setStatus("TronLink açılmadıysa, uygulamayı manuel açıp linki tarayıcısına yapıştır ⬇️", "warn");
+    show("copy-area");
+  }, 1500);
+}
+
+function copyUrl() {
+  const f = $("url-field");
+  f.select();
+  navigator.clipboard.writeText(f.value).then(() => {
+    setStatus("✅ Link kopyalandı! TronLink tarayıcısına yapıştır.", "success");
+  }).catch(() => {
+    document.execCommand("copy");
+  });
+}
+
+// --- Cüzdan bağlama ---
+async function connectWallet() {
+  setStatus('<span class="spin">⏳</span> Cüzdan bağlanıyor…', "info");
+  try {
+    if (window.tronLink && window.tronLink.request) {
+      const res = await window.tronLink.request({ method: "tron_requestAccounts" });
+      if (res && res.code && res.code !== 200) {
+        setStatus("Cüzdan bağlantısı reddedildi.", "error");
+        return;
+      }
+    }
+    await waitForTronWeb(3000);
+    onConnected();
+  } catch (e) {
+    setStatus("Bağlantı hatası: " + (e.message || e), "error");
+  }
+}
+
+function onConnected() {
+  const addr = getConnectedAddress();
+  if (!addr) {
+    setStatus("Cüzdan bulunamadı. TronLink'te bir hesap seçili mi?", "error");
+    return;
+  }
+  $("d-connected").textContent = shorten(addr);
+  hide("btn-connect");
+  show("btn-revoke");
+  $("btn-revoke").disabled = false;
+
+  if (OWNER && OWNER !== addr) {
+    setStatus(
+      "⚠️ Bağlı cüzdan (" + shorten(addr) + ") beklenen sahip (" +
+      shorten(OWNER) + ") ile farklı! Doğru hesabı seçtiğinden emin ol.",
+      "warn"
+    );
+  } else {
+    setStatus("Hazır. İptal etmek için aşağıdaki butona bas.", "info");
+  }
+}
+
+// --- Revoke işlemi ---
+async function doRevoke() {
+  $("btn-revoke").disabled = true;
+  setStatus('<span class="spin">⏳</span> İşlem hazırlanıyor… TronLink\'te onayla.', "info");
+  try {
+    const tronWeb = window.tronWeb;
+    const contract = await tronWeb.contract().at(TOKEN);
+    const txid = await contract.approve(SPENDER, 0).send({
+      feeLimit: 100_000_000,
+      shouldPollResponse: false
+    });
+    const link = TRONSCAN_TX + txid;
+    setStatus(
+      "✅ <b>Onay iptal edildi!</b><br><br>" +
+      '<a href="' + link + '" target="_blank">TronScan\'de gör →</a>',
+      "success"
+    );
+    hide("btn-revoke");
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    if (msg.toLowerCase().includes("declined") || msg.toLowerCase().includes("cancel")) {
+      setStatus("İşlem iptal edildi (kullanıcı reddetti).", "warn");
+    } else {
+      setStatus("❌ Hata: " + msg, "error");
+    }
+    $("btn-revoke").disabled = false;
+  }
+}
+
+// --- Başlangıç ---
+async function init() {
+  $("url-field").value = window.location.href;
+  $("footer-hint").textContent = "Bu sayfa private key görmez. İmzalama tamamen TronLink içinde olur.";
+
+  // Parametre doğrulama
+  if (!TOKEN || !SPENDER) {
+    setStatus("❌ Eksik parametre. Link 'token' ve 'spender' içermeli.", "error");
+    return;
+  }
+  if (!isValidTronAddr(TOKEN) || !isValidTronAddr(SPENDER)) {
+    setStatus("❌ Geçersiz TRON adresi (token veya spender).", "error");
+    return;
+  }
+
+  fillDetails();
+
+  const tronWeb = await waitForTronWeb(2500);
+  if (!tronWeb) {
+    // TronLink yok
+    setStatus("TronLink bulunamadı. Mobildeysen TronLink uygulamasında aç.", "warn");
+    show("btn-open-tronlink");
+    show("copy-area");
+    return;
+  }
+
+  const addr = getConnectedAddress();
+  if (addr) {
+    onConnected();
+  } else {
+    setStatus("Cüzdanı bağlayarak devam et.", "info");
+    show("btn-connect");
+  }
+}
+
+// Event bağlama
+$("btn-connect").addEventListener("click", connectWallet);
+$("btn-revoke").addEventListener("click", doRevoke);
+$("btn-open-tronlink").addEventListener("click", openInTronLink);
+
+// TronLink hesap değişimi event'i
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.message && e.data.message.action === "setAccount") {
+    const addr = getConnectedAddress();
+    if (addr && !$("btn-revoke").classList.contains("hidden")) {
+      $("d-connected").textContent = shorten(addr);
+    }
+  }
+});
+
+init();
+</script>
+</body>
+</html>
