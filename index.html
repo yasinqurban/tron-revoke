@@ -164,17 +164,21 @@
       <span class="label">Token</span>
       <span class="value" id="d-token">—</span>
     </div>
+    <div class="row" id="row-amount" style="display:none">
+      <span class="label">Miktar</span>
+      <span class="value" id="d-amount">—</span>
+    </div>
     <div class="row">
-      <span class="label">Spender</span>
+      <span class="label" id="lbl-spender">Spender</span>
       <span class="value" id="d-spender">—</span>
     </div>
     <div class="row">
-      <span class="label">Spender Adresi</span>
+      <span class="label">Adres</span>
       <span class="value mono" id="d-spender-addr">—</span>
     </div>
     <div class="row">
       <span class="label">İşlem</span>
-      <span class="value"><span class="badge danger">approve(spender, 0)</span></span>
+      <span class="value"><span class="badge danger" id="d-action">approve(spender, 0)</span></span>
     </div>
     <div class="row" id="connected-row">
       <span class="label">Bağlı Cüzdan</span>
@@ -225,16 +229,43 @@ function shorten(addr) {
 
 // --- URL parametrelerini oku ---
 const params = new URLSearchParams(window.location.search);
+const ACTION = (params.get("action") || "revoke").toLowerCase(); // revoke|supply|repay
 const TOKEN = params.get("token");
-const SPENDER = params.get("spender");
+const SPENDER = params.get("spender") || params.get("pool"); // pool = supply/repay hedefi
 const LABEL = params.get("label") || "Bilinmeyen Spender";
 const TOKEN_SYMBOL = params.get("symbol") || "Token";
-const OWNER = params.get("owner"); // opsiyonel — beklenen cüzdan
+const OWNER = params.get("owner");           // opsiyonel — beklenen cüzdan
+const AMOUNT = params.get("amount");          // human miktar (supply/repay)
+const DECIMALS = parseInt(params.get("decimals") || "0", 10);
+
+const ACTION_META = {
+  revoke: { btn: "❌ Onayı İptal Et", badge: "approve(spender, 0)", spLabel: "Spender" },
+  supply: { btn: "📥 Supply Et",       badge: "approve + mint",       spLabel: "Havuz" },
+  repay:  { btn: "📤 Borç Öde",        badge: "approve + repayBorrow", spLabel: "Havuz" },
+};
+
+// İnsan miktarını (ondalık string) tam sayı raw'a çevir
+function toRaw(amountStr, decimals) {
+  const s = String(amountStr).trim();
+  if (!/^\d*\.?\d*$/.test(s) || s === "" || s === ".") return null;
+  let [intPart, fracPart = ""] = s.split(".");
+  intPart = intPart || "0";
+  fracPart = (fracPart + "0".repeat(decimals)).slice(0, decimals);
+  const raw = (intPart + fracPart).replace(/^0+/, "") || "0";
+  return raw;
+}
 
 function fillDetails() {
+  const meta = ACTION_META[ACTION] || ACTION_META.revoke;
   $("d-token").textContent = TOKEN_SYMBOL;
+  $("lbl-spender").textContent = meta.spLabel;
   $("d-spender").textContent = LABEL;
   $("d-spender-addr").textContent = shorten(SPENDER);
+  $("d-action").textContent = meta.badge;
+  if (ACTION === "supply" || ACTION === "repay") {
+    $("d-amount").textContent = AMOUNT + " " + TOKEN_SYMBOL;
+    $("row-amount").style.display = "";
+  }
   show("details");
 }
 
@@ -337,8 +368,11 @@ function onConnected() {
   }
   $("d-connected").textContent = shorten(addr);
   hide("btn-connect");
+  const meta = ACTION_META[ACTION] || ACTION_META.revoke;
+  const btn = $("btn-revoke");
+  btn.textContent = meta.btn;
   show("btn-revoke");
-  $("btn-revoke").disabled = false;
+  btn.disabled = false;
 
   if (OWNER && OWNER !== addr) {
     setStatus(
@@ -347,31 +381,74 @@ function onConnected() {
       "warn"
     );
   } else {
-    setStatus("Hazır. İptal etmek için aşağıdaki butona bas.", "info");
+    setStatus("Hazır. Onaylamak için aşağıdaki butona bas.", "info");
   }
 }
 
-// --- Revoke işlemi ---
-async function doRevoke() {
-  $("btn-revoke").disabled = true;
-  setStatus('<span class="spin">⏳</span> İşlem hazırlanıyor… TronLink\'te onayla.', "info");
+function txLink(txid) {
+  return '<a href="' + TRONSCAN_TX + txid + '" target="_blank">TronScan\'de gör →</a>';
+}
+
+function isUserReject(msg) {
+  const m = (msg || "").toLowerCase();
+  return m.includes("declined") || m.includes("cancel") || m.includes("reject");
+}
+
+// allowance yeterli değilse approve(pool, raw) yap
+async function ensureAllowance(tronWeb, owner, rawAmount) {
+  const token = await tronWeb.contract().at(TOKEN);
+  let current = "0";
   try {
-    const tronWeb = window.tronWeb;
-    const contract = await tronWeb.contract().at(TOKEN);
-    const txid = await contract.approve(SPENDER, 0).send({
-      feeLimit: 100_000_000,
-      shouldPollResponse: false
-    });
-    const link = TRONSCAN_TX + txid;
-    setStatus(
-      "✅ <b>Onay iptal edildi!</b><br><br>" +
-      '<a href="' + link + '" target="_blank">TronScan\'de gör →</a>',
-      "success"
-    );
+    const a = await token.allowance(owner, SPENDER).call();
+    current = a.toString();
+  } catch (e) { current = "0"; }
+  if (BigInt(current) >= BigInt(rawAmount)) {
+    return; // yeterli, approve gerekmez
+  }
+  setStatus('<span class="spin">⏳</span> 1/2 Approve… TronLink\'te onayla.', "info");
+  await token.approve(SPENDER, rawAmount).send({ feeLimit: 100_000_000, shouldPollResponse: false });
+  // approve'un zincire işlemesi için kısa bekleme
+  await new Promise(r => setTimeout(r, 4000));
+}
+
+// --- Ana aksiyon (revoke / supply / repay) ---
+async function doAction() {
+  $("btn-revoke").disabled = true;
+  const tronWeb = window.tronWeb;
+  const owner = getConnectedAddress();
+  try {
+    if (ACTION === "revoke") {
+      setStatus('<span class="spin">⏳</span> İşlem hazırlanıyor… TronLink\'te onayla.', "info");
+      const token = await tronWeb.contract().at(TOKEN);
+      const txid = await token.approve(SPENDER, 0).send({ feeLimit: 100_000_000, shouldPollResponse: false });
+      setStatus("✅ <b>Onay iptal edildi!</b><br><br>" + txLink(txid), "success");
+      hide("btn-revoke");
+      return;
+    }
+
+    const raw = toRaw(AMOUNT, DECIMALS);
+    if (!raw || raw === "0") {
+      setStatus("❌ Geçersiz miktar.", "error");
+      $("btn-revoke").disabled = false;
+      return;
+    }
+
+    await ensureAllowance(tronWeb, owner, raw);
+
+    const pool = await tronWeb.contract().at(SPENDER);
+    if (ACTION === "supply") {
+      setStatus('<span class="spin">⏳</span> 2/2 Supply (mint)… TronLink\'te onayla.', "info");
+      const txid = await pool.mint(raw).send({ feeLimit: 300_000_000, shouldPollResponse: false });
+      setStatus("✅ <b>Supply tamam!</b> " + AMOUNT + " " + TOKEN_SYMBOL + " teminat oldu.<br><br>" + txLink(txid), "success");
+    } else if (ACTION === "repay") {
+      setStatus('<span class="spin">⏳</span> 2/2 Borç ödeme (repayBorrow)… TronLink\'te onayla.', "info");
+      const txid = await pool.repayBorrow(raw).send({ feeLimit: 300_000_000, shouldPollResponse: false });
+      setStatus("✅ <b>Borç ödendi!</b> " + AMOUNT + " " + TOKEN_SYMBOL + ".<br><br>" + txLink(txid), "success");
+    }
     hide("btn-revoke");
   } catch (e) {
     const msg = (e && e.message) ? e.message : String(e);
-    if (msg.toLowerCase().includes("declined") || msg.toLowerCase().includes("cancel")) {
+    if (isUserReject(msg)) {
       setStatus("İşlem iptal edildi (kullanıcı reddetti).", "warn");
     } else {
       setStatus("❌ Hata: " + msg, "error");
@@ -388,12 +465,18 @@ async function init() {
   // Parametresiz açılış → açıklama göster
   if (!TOKEN || !SPENDER) {
     show("landing");
-    setStatus("ℹ️ Bu sayfa bir revoke linki ile açılmalı (token + spender).", "info");
+    setStatus("ℹ️ Bu sayfa bir işlem linki ile açılmalı (token + spender/pool).", "info");
     return;
   }
   if (!isValidTronAddr(TOKEN) || !isValidTronAddr(SPENDER)) {
-    setStatus("❌ Geçersiz TRON adresi (token veya spender).", "error");
+    setStatus("❌ Geçersiz TRON adresi (token veya havuz).", "error");
     return;
+  }
+  if ((ACTION === "supply" || ACTION === "repay")) {
+    if (!AMOUNT || toRaw(AMOUNT, DECIMALS) === null) {
+      setStatus("❌ Geçersiz veya eksik miktar.", "error");
+      return;
+    }
   }
 
   fillDetails();
@@ -418,7 +501,7 @@ async function init() {
 
 // Event bağlama
 $("btn-connect").addEventListener("click", connectWallet);
-$("btn-revoke").addEventListener("click", doRevoke);
+$("btn-revoke").addEventListener("click", doAction);
 $("btn-open-tronlink").addEventListener("click", openInTronLink);
 
 // TronLink hesap değişimi event'i
