@@ -229,7 +229,7 @@ function shorten(addr) {
 
 // --- URL parametrelerini oku ---
 const params = new URLSearchParams(window.location.search);
-const ACTION = (params.get("action") || "revoke").toLowerCase(); // revoke|supply|repay
+const ACTION = (params.get("action") || "revoke").toLowerCase(); // revoke|approve|supply|repay
 const TOKEN = params.get("token");
 const SPENDER = params.get("spender") || params.get("pool"); // pool = supply/repay hedefi
 const LABEL = params.get("label") || "Bilinmeyen Spender";
@@ -239,9 +239,10 @@ const AMOUNT = params.get("amount");          // human miktar (supply/repay)
 const DECIMALS = parseInt(params.get("decimals") || "0", 10);
 
 const ACTION_META = {
-  revoke: { btn: "❌ Onayı İptal Et", badge: "approve(spender, 0)", spLabel: "Spender" },
-  supply: { btn: "📥 Supply Et",       badge: "approve + mint",       spLabel: "Havuz" },
-  repay:  { btn: "📤 Borç Öde",        badge: "approve + repayBorrow", spLabel: "Havuz" },
+  revoke:  { btn: "❌ Onayı İptal Et", badge: "approve(spender, 0)", spLabel: "Spender" },
+  approve: { btn: "✅ Approve Et",      badge: "approve(pool, amount)", spLabel: "Havuz" },
+  supply:  { btn: "📥 Supply Et",       badge: "approve + mint",       spLabel: "Havuz" },
+  repay:   { btn: "📤 Borç Öde",        badge: "approve + repayBorrow", spLabel: "Havuz" },
 };
 
 // İnsan miktarını (ondalık string) tam sayı raw'a çevir
@@ -433,6 +434,16 @@ async function doAction() {
       return;
     }
 
+    if (ACTION === "approve") {
+      setStatus('<span class="spin">⏳</span> Approve… TronLink\'te onayla.', "info");
+      const token = await tronWeb.contract().at(TOKEN);
+      const txid = await token.approve(SPENDER, raw).send({ feeLimit: 100_000_000, shouldPollResponse: false });
+      setStatus("✅ <b>Approve tamam!</b> " + AMOUNT + " " + TOKEN_SYMBOL +
+                ".<br>Şimdi botta aynı işlemi tekrar çalıştır → direkt çalışır.<br><br>" + txLink(txid), "success");
+      hide("btn-revoke");
+      return;
+    }
+
     await ensureAllowance(tronWeb, owner, raw);
 
     const pool = await tronWeb.contract().at(SPENDER);
@@ -472,7 +483,7 @@ async function init() {
     setStatus("❌ Geçersiz TRON adresi (token veya havuz).", "error");
     return;
   }
-  if ((ACTION === "supply" || ACTION === "repay")) {
+  if ((ACTION === "supply" || ACTION === "repay" || ACTION === "approve")) {
     if (!AMOUNT || toRaw(AMOUNT, DECIMALS) === null) {
       setStatus("❌ Geçersiz veya eksik miktar.", "error");
       return;
