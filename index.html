@@ -395,12 +395,29 @@ function isUserReject(msg) {
   return m.includes("declined") || m.includes("cancel") || m.includes("reject");
 }
 
+// Okuma cagrilarini 429 / gecici ag hatalarinda backoff ile tekrar dene.
+// (TronLink'in TronGrid node'u ABI/allowance cekiminde rate-limit (429) verebilir.)
+async function withRetry(fn, tries = 4) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); }
+    catch (e) {
+      last = e;
+      const msg = (e && e.message) ? e.message : String(e);
+      if (i === tries - 1 || !/429|rate|timeout|network|Failed to fetch|503/i.test(msg)) throw e;
+      setStatus('<span class="spin">⏳</span> Ag yogun (429), tekrar deneniyor… (' + (i + 1) + '/' + tries + ')', "warn");
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
 // allowance yeterli değilse approve(pool, raw) yap
 async function ensureAllowance(tronWeb, owner, rawAmount) {
-  const token = await tronWeb.contract().at(TOKEN);
+  const token = await withRetry(() => tronWeb.contract().at(TOKEN));
   let current = "0";
   try {
-    const a = await token.allowance(owner, SPENDER).call();
+    const a = await withRetry(() => token.allowance(owner, SPENDER).call());
     current = a.toString();
   } catch (e) { current = "0"; }
   if (BigInt(current) >= BigInt(rawAmount)) {
@@ -420,7 +437,7 @@ async function doAction() {
   try {
     if (ACTION === "revoke") {
       setStatus('<span class="spin">⏳</span> İşlem hazırlanıyor… TronLink\'te onayla.', "info");
-      const token = await tronWeb.contract().at(TOKEN);
+      const token = await withRetry(() => tronWeb.contract().at(TOKEN));
       const txid = await token.approve(SPENDER, 0).send({ feeLimit: 100_000_000, shouldPollResponse: false });
       setStatus("✅ <b>Onay iptal edildi!</b><br><br>" + txLink(txid), "success");
       hide("btn-revoke");
@@ -436,7 +453,7 @@ async function doAction() {
 
     if (ACTION === "approve") {
       setStatus('<span class="spin">⏳</span> Approve… TronLink\'te onayla.', "info");
-      const token = await tronWeb.contract().at(TOKEN);
+      const token = await withRetry(() => tronWeb.contract().at(TOKEN));
       const txid = await token.approve(SPENDER, raw).send({ feeLimit: 100_000_000, shouldPollResponse: false });
       setStatus("✅ <b>Approve tamam!</b> " + AMOUNT + " " + TOKEN_SYMBOL +
                 ".<br>Şimdi botta aynı işlemi tekrar çalıştır → direkt çalışır.<br><br>" + txLink(txid), "success");
@@ -446,7 +463,7 @@ async function doAction() {
 
     await ensureAllowance(tronWeb, owner, raw);
 
-    const pool = await tronWeb.contract().at(SPENDER);
+    const pool = await withRetry(() => tronWeb.contract().at(SPENDER));
     if (ACTION === "supply") {
       setStatus('<span class="spin">⏳</span> 2/2 Supply (mint)… TronLink\'te onayla.', "info");
       const txid = await pool.mint(raw).send({ feeLimit: 300_000_000, shouldPollResponse: false });
