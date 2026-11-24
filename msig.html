@@ -47,6 +47,16 @@
   .hidden { display: none !important; }
   .spin { display: inline-block; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .tabs { display: flex; gap: 8px; }
+  .tabs button { margin-top: 0; padding: 10px; font-size: 14px; background: #2a3340; }
+  .tabs button.on { background: var(--blue); }
+  label { display: block; color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .field { width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--border);
+           background: #0f1419; color: var(--text); font-size: 13px; font-family: inherit; }
+  textarea.field { min-height: 92px; resize: vertical; }
+  .ack { display: flex; gap: 10px; align-items: flex-start; color: var(--text); margin-top: 14px; }
+  .ack input { margin-top: 4px; flex-shrink: 0; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -54,6 +64,52 @@
   <div class="logo">✍️</div>
   <h1>Çoklu İmza Onayı</h1>
   <div class="subtitle" id="subtitle">TRON çoklu imza (multisig) cüzdanından transfer</div>
+
+  <div id="home" class="hidden">
+    <div class="tabs">
+      <button id="tab-setup" onclick="tab('setup')">🔐 Cüzdan kur</button>
+      <button id="tab-start" onclick="tab('start')">📤 Gönderim başlat</button>
+    </div>
+
+    <div id="setup-area" class="hidden">
+      <div class="hint">Cüzdanında SEÇİLİ hesap çoklu imzalı cüzdana dönüşür: sahiplik ve harcama yetkisi aşağıdaki
+        sahiplere geçer. Bunun için yeni bir hesap aç, ona Nile TRX gönder (kurulum 100 TRX ağ ücreti ister). TronLink önerilir.</div>
+      <label for="f-owners">Sahip adresleri (her satıra bir T… adres, en çok 5)</label>
+      <textarea id="f-owners" class="field mono" spellcheck="false" autocapitalize="off" autocomplete="off"
+                oninput="resetSetup()"></textarea>
+      <label for="f-m">Eşik: harcamak için gereken imza sayısı</label>
+      <input id="f-m" class="field" type="number" min="1" max="5" value="2" inputmode="numeric" oninput="resetSetup()">
+      <button id="btn-check" onclick="checkSetup()">🔎 Kontrol et</button>
+      <div id="setup-plan" class="hidden">
+        <div class="box">
+          <div class="row"><span class="label">Çevrilecek hesap</span><span class="value mono" id="s-account"></span></div>
+          <div class="row"><span class="label">Sahipler</span><span class="value mono" id="s-owners"></span></div>
+          <div class="row"><span class="label">Eşik</span><span class="value" id="s-m"></span></div>
+          <div class="row"><span class="label">Ağ ücreti</span><span class="value" id="s-fee"></span></div>
+          <div class="row"><span class="label">Bakiye</span><span class="value" id="s-balance"></span></div>
+        </div>
+        <label class="ack"><input type="checkbox" id="ack" onchange="$('btn-setup').disabled = !this.checked || !SETUP">
+          <span>Bu hesabın yönetimini yukarıdaki sahiplere devrediyorum. Bundan sonra bu hesapla tek başıma işlem
+          yapamam; geri almak da <b id="s-m2"></b> imza ister.</span></label>
+        <button id="btn-setup" class="btn-sign" disabled onclick="doSetup()">✍️ İmzala ve Kur</button>
+      </div>
+      <div id="setup-done" class="hidden">
+        <button onclick="startFrom()">📤 Bu cüzdandan gönderim başlat</button>
+      </div>
+    </div>
+
+    <div id="start-area" class="hidden">
+      <div class="hint">İmzasız bir transfer kurulur ve bir link verilir; sahipler linki kendi cüzdanında açıp imzalar.
+        Başlatmak ücretsiz; 1 TRX çoklu imza ücreti yalnız işlem ağa giderken cüzdandan düşer.</div>
+      <label for="f-wallet">Multisig cüzdan</label>
+      <input id="f-wallet" class="field mono" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="T…">
+      <label for="f-to">Alıcı</label>
+      <input id="f-to" class="field mono" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="T…">
+      <label for="f-amount">Miktar (TRX)</label>
+      <input id="f-amount" class="field" inputmode="decimal" autocomplete="off" placeholder="1">
+      <button id="btn-start" onclick="startTransfer()">🧾 İmza linki oluştur</button>
+    </div>
+  </div>
 
   <div id="details" class="box hidden">
     <div class="row"><span class="label">Cüzdan (multisig)</span><span class="value mono" id="v-wallet"></span></div>
@@ -81,7 +137,7 @@
     <button id="btn-copy" class="btn-alt" onclick="copyField('url-field', 'btn-copy')">📋 Linki Kopyala</button>
   </div>
   <div id="next-area" class="hidden">
-    <div class="hint">İmzan bu linkin içinde. Diğer imzacı bu linki kendi cüzdanında açıp imzalayacak:</div>
+    <div class="hint" id="next-hint">İmzan bu linkin içinde. Diğer imzacı bu linki kendi cüzdanında açıp imzalayacak:</div>
     <input id="next-field" class="url" readonly>
     <button id="btn-next" onclick="copyField('next-field', 'btn-next')">📋 Yeni Linki Kopyala</button>
     <a id="btn-share" class="btn btn-alt" href="#" target="_blank" rel="noopener">📨 Telegram ile Gönder</a>
@@ -89,22 +145,32 @@
   <div id="done-area" class="hidden">
     <a id="scan-link" class="btn" href="#" target="_blank" rel="noopener">🔎 İşlemi Tronscan'de Gör</a>
   </div>
+  <a id="btn-new" class="btn btn-alt hidden" href="./msig.html">↩ Yeni işlem: cüzdan kur ya da gönderim başlat</a>
 </div>
 
 <script>
 "use strict";
-// Co-owner signing for a TRON multisig transfer (Justlend-DEX v1.146.0, source web/msig.html, published as
-// tron-revoke/msig.html; the bot checks the published bytes against its pinned sha256). The bot builds the
-// UNSIGNED transfer under the active permission (id 2) and puts it in this page's #fragment. Each co-owner
-// opens the link in their own wallet (TronLink or Trust Wallet) and signs; the page carries the signatures
-// forward in a new link, and when they reach the threshold it broadcasts to Nile itself. No key, no server,
-// no third-party script: the wallet signs, TronGrid's Nile API answers (its CORS allows a browser).
+// A TRON multisig on Nile from one page (Justlend-DEX v1.147.0, source web/msig.html, published as
+// tron-revoke/msig.html; the bot checks the published bytes against its pinned sha256). Without a link it
+// SETS UP a multisig -- the wallet's selected account hands its owner and active permissions to M-of-N owners,
+// signed by that account -- and STARTS a transfer: the UNSIGNED one under the active permission (id 2), put in
+// this page's #fragment, exactly what the bot's /msig gonder makes. With a link, each co-owner opens it in their
+// own wallet (TronLink or Trust Wallet) and signs; the page carries the signatures forward in a new link, and
+// when they reach the threshold it broadcasts to Nile itself. No key, no server, no third-party script: the
+// wallet signs, TronGrid's Nile API answers (its CORS allows a browser). The numbers mirror services/msig_tron.py.
 const NETS = {
   nile: { api: "https://nile.trongrid.io", scan: "https://nile.tronscan.org/#/transaction/",
           genesis: "0000000000000000d698d4192c56cb6be724a558448e2684802de4d6cd8690dc",
           name: "TRON Nile (test ağı)" },
 };
 const PERMISSION_ID = 2;
+const SEND_HOURS = 12;                    // msig_tron.SEND_HOURS: a proposal stays signable this long (chain max 24 h)
+const MULTISIG_FEE_SUN = 1000000n;        // msig_tron.MULTISIG_FEE_SUN: the chain's 1 TRX per multi-signature transaction
+const MAX_KEYS = 5;                       // msig_tron.MAX_KEYS: java-tron refuses a sixth key
+const FEE_KEY = "getUpdateAccountPermissionFee";   // msig_tron.FEE_KEY: the setup fee, read live (100 TRX)
+const MARGIN_SUN = 1000000n;              // msig_tron.MARGIN_SUN: bandwidth for the update
+const SETUP_MINUTES = 10;                 // the setup transaction waits this long for its one signature
+const UPDATE_URL = "type.googleapis.com/protocol.AccountPermissionUpdateContract";
 let P = null;        // the link's payload: {v, net, tx: {txID, raw_data, raw_data_hex}, sigs: [hex]}
 let NET = null;
 let PERM = null;     // {threshold, keys: [hex]}: the wallet's active permission, read from the chain
@@ -149,6 +215,35 @@ async function hexToBase58(hex) {
   return out;
 }
 function hexToText(h) { try { return new TextDecoder().decode(hexToBytes(h)); } catch (e) { return h; } }
+async function base58ToHex(addr) {      // a T-address -> "41" + 20 bytes, its checksum verified, or refused
+  const s = String(addr || "").trim();
+  let n = 0n;
+  for (const c of s) {
+    const i = B58.indexOf(c);
+    if (i < 0) throw new Error("Geçersiz TRON adresi: " + (s || "(boş)"));
+    n = n * 58n + BigInt(i);
+  }
+  const bytes = [];
+  while (n > 0n) { bytes.unshift(Number(n % 256n)); n /= 256n; }
+  for (const c of s) { if (c === "1") bytes.unshift(0); else break; }
+  const full = new Uint8Array(bytes);
+  if (full.length !== 25 || full[0] !== 0x41) throw new Error("Geçersiz TRON adresi: " + (s || "(boş)"));
+  const check = (await sha256(await sha256(full.slice(0, 21)))).slice(0, 4);
+  if (check.some((b, i) => b !== full[21 + i])) throw new Error("Geçersiz TRON adresi (sağlama tutmuyor): " + s);
+  return bytesToHex(full.slice(0, 21));
+}
+function parseTrx(text) {               // "1", "1.5", "1,5" -> sun as a BigInt: at most 6 decimals, above zero
+  const t = String(text || "").trim();
+  if (/^[1-9]\d{0,2}\.\d{3}$/.test(t))   // "1.500": a Turkish thousand or one and a half? asked, never guessed
+    throw new Error("Belirsiz miktar: " + t + ". Binlik için noktasız yaz (1500), ondalık için virgül kullan (1,5).");
+  const s = t.replace(",", ".");
+  const m = /^(\d+)(?:\.(\d{1,6}))?$/.exec(s);
+  if (!m) throw new Error("Miktar bir sayı olmalı, en çok 6 ondalık: " + (text || "(boş)"));
+  const sun = BigInt(m[1]) * 1000000n + BigInt((m[2] || "").padEnd(6, "0"));
+  if (sun <= 0n) throw new Error("Miktar sıfırdan büyük olmalı.");
+  if (sun > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Miktar çok büyük.");
+  return sun;
+}
 
 // --- what is signed, decoded from raw_data_hex itself (protobuf Transaction.raw; the signature is over
 // sha256 of these bytes). Everything this page shows comes from here, never from the link's JSON alone
@@ -156,23 +251,35 @@ function hexToText(h) { try { return new TextDecoder().decode(hexToBytes(h)); } 
 function pbFields(bytes) {
   const out = [];
   let i = 0;
-  const varint = () => {
-    let x = 0n, s = 0n, b;
-    do { if (i >= bytes.length) throw new Error("pb"); b = bytes[i++]; x |= BigInt(b & 0x7f) << s; s += 7n; } while (b & 0x80);
+  const bad = () => { throw new Error("İşlem baytları standart protobuf biçiminde değil."); };
+  // Only the minimal encoding is read (security review 2026-11-24): protobuf-java keeps the low 32 bits of an
+  // over-long tag and the low 64 of a value, so such bytes would mean one field here and another to the chain.
+  const varint = max => {
+    let x = 0n, s = 0n, b, n = 0;
+    do {
+      if (i >= bytes.length || n === max) bad();
+      b = bytes[i++]; n++; x |= BigInt(b & 0x7f) << s; s += 7n;
+    } while (b & 0x80);
+    if (n > 1 && b === 0) bad();                   // a trailing zero group: not the minimal encoding
     return x;
   };
   while (i < bytes.length) {
-    const key = Number(varint()), field = key >>> 3, wt = key & 7;
-    if (wt === 0) out.push([field, varint()]);
-    else if (wt === 2) {
-      const n = Number(varint());
-      if (i + n > bytes.length) throw new Error("pb");
-      out.push([field, bytes.slice(i, i + n)]); i += n;
+    const key = varint(5);
+    if (key >= 1n << 32n || key >> 3n === 0n) bad();
+    const field = Number(key >> 3n), wt = Number(key & 7n);
+    if (wt === 0) {
+      const v = varint(10);
+      if (v >= 1n << 64n) bad();
+      out.push([field, v]);
+    } else if (wt === 2) {
+      const n = varint(10);
+      if (n > BigInt(bytes.length - i)) bad();
+      out.push([field, bytes.slice(i, i + Number(n))]); i += Number(n);
     } else if (wt === 1 || wt === 5) {
       const n = wt === 1 ? 8 : 4;
-      if (i + n > bytes.length) throw new Error("pb");
+      if (i + n > bytes.length) bad();
       out.push([field, null]); i += n;
-    } else throw new Error("pb wire type " + wt);
+    } else bad();
   }
   return out;
 }
@@ -185,6 +292,9 @@ function one(fields, f, want) {  // exactly one occurrence, of the kind expected
 function only(fields, allowed, what) {   // a field this page cannot show is a field it does not sign
   const extra = fields.map(x => x[0]).filter(f => !allowed.includes(f));
   if (extra.length) throw new Error("İşlemde bu sayfanın gösteremediği alan var (" + what + ": " + extra.join(",") + ").");
+}
+function opt(fields, f, want, dflt) {    // proto3 writes no zero scalar: absent is the default, present is once
+  return fields.some(x => x[0] === f) ? one(fields, f, want) : dflt;
 }
 function decodeRaw(hex) {
   const raw = pbFields(hexToBytes(hex));
@@ -205,10 +315,79 @@ function trx(sun) {              // exact, from a BigInt: "1.234567 TRX" written
   return (sun / 1000000n).toLocaleString("tr-TR") + (frac ? "," + frac : "") + " TRX";
 }
 
+// --- a setup, decoded the same way: AccountPermissionUpdateContract (type 46) = owner_address 1, owner 2,
+// witness 3 (refused: this page makes no witness), actives 4; Permission = type 1, id 2, permission_name 3,
+// threshold 4, parent_id 5, operations 6, keys 7; Key = address 1, weight 2.
+function decodePermission(bytes, what) {
+  const p = pbFields(bytes);
+  only(p, [1, 2, 3, 4, 5, 6, 7], what);
+  const keys = p.filter(x => x[0] === 7).map(x => {
+    if (!(x[1] instanceof Uint8Array)) throw new Error("İşlem baytlarında " + what + " anahtarı beklenen biçimde değil.");
+    const k = pbFields(x[1]);
+    only(k, [1, 2], what + " key");
+    return { address: bytesToHex(one(k, 1, "bytes")), weight: opt(k, 2, "int", 0n) };
+  });
+  return { type: Number(opt(p, 1, "int", 0n)), id: Number(opt(p, 2, "int", 0n)), threshold: opt(p, 4, "int", 0n),
+           name: new TextDecoder().decode(opt(p, 3, "bytes", new Uint8Array(0))), parent: Number(opt(p, 5, "int", 0n)),
+           operations: bytesToHex(opt(p, 6, "bytes", new Uint8Array(0))), keys };
+}
+function decodeUpdate(hex) {
+  const raw = pbFields(hexToBytes(hex));
+  only(raw, [1, 3, 4, 8, 11, 14, 18], "raw");
+  const contract = pbFields(one(raw, 11, "bytes"));
+  only(contract, [1, 2, 5], "contract");
+  const any = pbFields(one(contract, 2, "bytes"));
+  only(any, [1, 2], "parameter");
+  const val = pbFields(one(any, 2, "bytes"));
+  only(val, [1, 2, 4], "permission update");
+  const actives = val.filter(x => x[0] === 4).map(x => {
+    if (!(x[1] instanceof Uint8Array)) throw new Error("İşlem baytlarında active izni beklenen biçimde değil.");
+    return decodePermission(x[1], "active");
+  });
+  return { type: Number(one(contract, 1, "int")), url: new TextDecoder().decode(one(any, 1, "bytes")),
+           perm: Number(opt(contract, 5, "int", 0n)), account: bytesToHex(one(val, 1, "bytes")),
+           owner: decodePermission(one(val, 2, "bytes"), "owner"), actives, expiration: Number(one(raw, 8, "int")) };
+}
+function allowsTransfer(ops) {          // the active's operation mask must allow TransferContract (type 1)
+  const b = /^[0-9a-f]{64}$/.test(ops || "") ? hexToBytes(ops) : new Uint8Array(0);
+  return b.length === 32 && (b[0] & 0x02) !== 0;
+}
+function permIs(p, type, m, owners) {   // exactly this type, m of these owners, every weight 1, no parent
+  const got = p.keys.map(k => k.address).sort(), want = owners.slice().sort();
+  return p.type === type && p.threshold === BigInt(m) && p.parent === 0 && got.length === want.length &&
+         got.every((a, i) => a === want[i]) && p.keys.every(k => k.weight === 1n);
+}
+function checkUpdate(d, account, owners, m, ops) {   // the bytes the wallet will sign, against what was asked
+  if (d.type !== 46 || d.url !== UPDATE_URL) throw new Error("Bu işlem bir izin güncellemesi değil.");
+  if (d.perm !== 0) throw new Error("İzin güncellemesini hesabın sahiplik izni (0) imzalamalı.");
+  if (d.account !== account) throw new Error("İşlem başka bir hesabı değiştiriyor.");
+  if (!permIs(d.owner, 0, m, owners) || d.owner.id !== 0 || d.owner.operations !== "" || d.owner.name !== "owner")
+    throw new Error("İşlemdeki sahiplik izni istenenle aynı değil.");
+  const a = d.actives[0];
+  if (d.actives.length !== 1 || !permIs(a, 2, m, owners) || ![0, PERMISSION_ID].includes(a.id) || a.operations !== ops ||
+      a.name !== "active")
+    throw new Error("İşlemdeki harcama izni istenenle aynı değil.");
+  if (!allowsTransfer(a.operations)) throw new Error("Bu harcama izni TRX transferine izin vermiyor.");
+}
+function jsonSaysUpdate(raw, account, owners, m, ops) {   // what the wallet reads must say what the bytes say
+  const c = (raw || {}).contract || [];
+  const v = ((c[0] || {}).parameter || {}).value || {};
+  const keysOf = p => ((p || {}).keys || []).map(k => String(k.address).toLowerCase()).sort().join();
+  const plain = (p, types, name) => types.includes(p.type === undefined ? 0 : p.type) && !Number(p.parent_id || 0) &&
+                                    p.permission_name === name && (p.keys || []).every(k => Number(k.weight) === 1);
+  const want = owners.slice().sort().join(), acts = v.actives || [], own = v.owner || {};
+  const same = c.length === 1 && c[0].type === "AccountPermissionUpdateContract" && !c[0].Permission_id &&
+               String(v.owner_address).toLowerCase() === account && !v.witness &&
+               Number(own.threshold) === m && keysOf(own) === want && plain(own, [0, "Owner"], "owner") &&
+               acts.length === 1 && Number(acts[0].threshold) === m && keysOf(acts[0]) === want &&
+               plain(acts[0], [2, "Active"], "active") && String(acts[0].operations || "").toLowerCase() === ops;
+  if (!same) throw new Error("Düğümün işlem metni imzalanacak baytlarla aynı değil; hiçbir şey imzalanmadı.");
+}
+
 // --- the link ---
 function readPayload() {
   // TronLink appends "?_=1" to a fragment that has no "?" (its own adapter does): keep what comes before.
-  const frag = (window.location.hash || "").slice(1).split("?")[0].split("&")[0];
+  const frag = fragment();
   return frag ? JSON.parse(b64uDecode(frag)) : null;
 }
 function linkWith(sigs) {
@@ -221,6 +400,59 @@ async function api(path, body) {
                                           body: JSON.stringify(body) });
   if (!r.ok) throw new Error("Nile API HTTP " + r.status);
   return r.json();
+}
+async function requireNile() {          // the chain is asked, not trusted
+  const g = await api("/wallet/getblockbynum", { num: 0 });
+  if ((g.blockID || "") !== NET.genesis) throw new Error("Bağlanılan ağ Nile değil (genesis farklı).");
+}
+function nodeError(r) {                 // TronGrid says why in one of several places, often as hex
+  const m = String((r && (r.Error || (r.result && r.result.message) || r.message)) || "");
+  return /^(?:[0-9a-f]{2})+$/i.test(m) ? hexToText(m) : m;
+}
+async function chainParam(key) {
+  const r = await api("/wallet/getchainparameters", {});
+  const row = (r.chainParameter || []).find(x => x.key === key);
+  if (!row) throw new Error("Zincir parametresi okunamadı (" + key + "); hiçbir şey imzalanmadı.");
+  return BigInt(row.value || 0);
+}
+async function canonical(raw) {         // the node serializes raw_data; the caller then decodes those bytes itself
+  const w = await api("/wallet/getsignweight", { raw_data: raw, visible: false });
+  const t = (w.transaction || {}).transaction || {};
+  if (!/^(?:[0-9a-f]{2})+$/i.test(t.raw_data_hex || "") ||
+      bytesToHex(await sha256(hexToBytes(t.raw_data_hex))) !== t.txID)
+    throw new Error("Düğüm işlemi kuramadı: " + (nodeError(w) || "txID tutmuyor"));
+  return { visible: false, txID: t.txID, raw_data: t.raw_data, raw_data_hex: t.raw_data_hex };
+}
+async function waitInfo(txid, ms) {     // the block that holds it, or null after `ms`
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    try {
+      const i = await api("/wallet/gettransactioninfobyid", { value: txid });
+      if (i && i.blockNumber) return i;
+    } catch (e) { /* one failed read is not an answer: ask again */ }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return null;
+}
+async function requireNileRef(rawHex) {
+  // TaPoS (security review 2026-11-24): only ref_block_bytes (raw 1, the block number's low 2 bytes) and
+  // ref_block_hash (raw 4, bytes 8-16 of that block's id) tie signed bytes to ONE chain; getsignweight ignores
+  // them. They must name a recent Nile block, or a signature collected here could be broadcast on mainnet.
+  const raw = pbFields(hexToBytes(rawHex));
+  const rb = one(raw, 1, "bytes"), rh = one(raw, 4, "bytes");
+  if (rb.length !== 2 || rh.length !== 8) throw new Error("İşlemin blok referansı (ref_block) eksik ya da bozuk.");
+  for (let k = 0; k < 3; k++) {                    // a lagging node may not have the block yet: ask again
+    if (k) await new Promise(r => setTimeout(r, 3000));
+    const head = await api("/wallet/getnowblock", {});
+    const top = Number((((head || {}).block_header || {}).raw_data || {}).number || 0);
+    let n = top - (top % 65536) + rb[0] * 256 + rb[1];
+    if (n > top + 100) n -= 65536;
+    const b = n > 0 ? await api("/wallet/getblockbynum", { num: n }) : {};
+    if (!b.blockID) continue;
+    if (String(b.blockID).slice(16, 32) === bytesToHex(rh)) return;
+    break;
+  }
+  throw new Error("İşlem Nile'nin yakın bir bloğuna bağlı değil (ref_block): başka bir ağın işlemi olabilir. İmzalanmadı.");
 }
 async function verify(p) {
   // What the wallet will sign must be what this page shows, on the network it names.
@@ -235,8 +467,10 @@ async function verify(p) {
   if (d.type !== 1 || d.url !== "type.googleapis.com/protocol.TransferContract")
     throw new Error("Bu sayfa yalnızca TRX transferi imzalatır.");
   if (d.perm !== PERMISSION_ID) throw new Error("İşlem çoklu imza izniyle (2) kurulmamış.");
-  if (!/^41[0-9a-f]{40}$/.test(d.owner) || !/^41[0-9a-f]{40}$/.test(d.to) || d.amount <= 0n)
+  if (!/^41[0-9a-f]{40}$/.test(d.owner) || !/^41[0-9a-f]{40}$/.test(d.to) || d.amount <= 0n || d.amount >= 1n << 63n)
     throw new Error("İşlemdeki adres ya da miktar geçersiz.");
+  if (d.expiration > Date.now() + 25 * 3600 * 1000)
+    throw new Error("İşlemin geçerliliği 24 saati aşıyor; zincir böyle bir işlemi almaz.");
   // the JSON the wallet reads must say exactly what the signed bytes say
   const cs = (tx.raw_data || {}).contract || [];
   const v = ((cs[0] || {}).parameter || {}).value || {};
@@ -245,8 +479,8 @@ async function verify(p) {
              Number(tx.raw_data.expiration) === d.expiration;
   try { same = same && BigInt(v.amount) === d.amount; } catch (e) { same = false; }
   if (!same) throw new Error("Bağlantıdaki işlem metni imzalanacak baytlarla aynı değil.");
-  const g = await api("/wallet/getblockbynum", { num: 0 });          // the chain is asked, not trusted
-  if ((g.blockID || "") !== NET.genesis) throw new Error("Bağlanılan ağ Nile değil (genesis farklı).");
+  await requireNile();
+  if (d.expiration > Date.now()) await requireNileRef(tx.raw_data_hex);   // an expired one is never offered for signing
   return { owner: d.owner, to: d.to, amount: d.amount, expiration: d.expiration };
 }
 async function permission(ownerHex) {
@@ -303,6 +537,8 @@ function myHex(tronWeb) {
   const h = d.hex || (d.base58 && tronWeb.address && tronWeb.address.toHex(d.base58)) || "";
   return String(h).toLowerCase();
 }
+const NILE_HINT = "TronLink'te ağı Nile'ye geçir (Ayarlar → Düğüm/Ağ → Nile), sonra sayfayı yenile.";
+function onNile(tronWeb) { return String(((tronWeb || {}).fullNode || {}).host || "").includes("nile"); }
 
 async function sign() {
   hide("btn-sign");
@@ -317,8 +553,7 @@ async function sign() {
       throw new Error("Bu hesap (" + esc(await hexToBase58(me)) + ") bu çoklu imza cüzdanının sahiplerinden biri değil.");
     const before = await signedBy(P.sigs);
     if (before.approved.includes(me)) { setStatus("Bu hesap zaten imzalamış.", "info"); return next(before); }
-    if (w.multi && !String((w.tronWeb.fullNode || {}).host || "").includes("nile"))
-      throw new Error("TronLink'te ağı Nile'ye geçir (Ayarlar → Düğüm/Ağ → Nile), sonra sayfayı yenile.");
+    if (w.multi && !onNile(w.tronWeb)) throw new Error(NILE_HINT);
     setStatus('<span class="spin">⏳</span> ' + esc(w.name) + " imza soruyor: cüzdanda onayla…", "info");
     // Every wallet signs the UNSIGNED transaction; the page merges the signatures itself.
     const unsigned = { visible: false, txID: P.tx.txID, raw_data: P.tx.raw_data, raw_data_hex: P.tx.raw_data_hex };
@@ -340,28 +575,234 @@ async function sign() {
     show("btn-sign");
   }
 }
-function next(s) {
+function share(msg, type) {             // the link to pass on, carrying the signatures so far
   const url = linkWith(P.sigs);
   $("next-field").value = url;
   $("btn-share").href = "https://t.me/share/url?url=" + encodeURIComponent(url) +
                         "&text=" + encodeURIComponent("Çoklu imza onayı bekliyor");
+  $("next-hint").textContent = P.sigs.length
+    ? "İmzan bu linkin içinde. Diğer imzacı bu linki kendi cüzdanında açıp imzalayacak:"
+    : "Bu linki sahiplere gönder; her sahip kendi cüzdanında açıp imzalar:";
   show("next-area");
-  setStatus("✅ İmza: " + s.weight + " / " + PERM.threshold + ". Yeni linki diğer imzacıya gönder.", "success");
+  setStatus(msg, type);
+}
+function next(s) {
+  share("✅ İmza: " + s.weight + " / " + PERM.threshold + ". Yeni linki diğer imzacıya gönder.", "success");
 }
 async function broadcast() {
   hide("btn-send");
   setStatus('<span class="spin">⏳</span> Eşik doldu: Nile ağına gönderiliyor…', "info");
   const r = await api("/wallet/broadcasttransaction", Object.assign({}, P.tx, { signature: P.sigs }));
   const msg = r.message ? hexToText(r.message) : "";
-  if (r.result || /DUP_TRANSACTION/i.test(String(r.code || "") + msg)) return done();
+  if (r.result || /DUP_TRANSACTION/i.test(String(r.code || "") + msg)) {
+    done();
+    const info = await waitInfo(P.tx.txID, 60000);
+    return info ? done(info) : undefined;
+  }
   throw new Error("Ağ reddetti: " + esc(String(r.code || "") + " " + msg));
 }
-function done() {
+function done(info) {
   hide("next-area"); hide("btn-sign"); hide("btn-send");
   $("scan-link").href = NET.scan + P.tx.txID;
   show("done-area");
-  setStatus("✅ İşlem Nile ağına gönderildi.", "success");
+  setStatus(info && info.blockNumber ? "✅ İşlem zincirde: blok " + esc(info.blockNumber) + "."
+                                     : "✅ İşlem Nile ağına gönderildi.", "success");
 }
+
+// --- starting a transfer here: msig_tron.propose_trx in the browser -- nothing is signed, nothing is held ---
+async function buildTransfer(walletHex, toHex, sun) {
+  const t = await api("/wallet/createtransaction", { owner_address: walletHex, to_address: toHex,
+                                                      amount: Number(sun), visible: false });
+  if (!t.raw_data || !(t.raw_data.contract || []).length) throw new Error("Düğüm transferi kurmadı: " + nodeError(t));
+  const raw = JSON.parse(JSON.stringify(t.raw_data));
+  raw.contract[0].Permission_id = PERMISSION_ID;                    // the active permission signs it
+  raw.expiration = Number(raw.timestamp || Date.now()) + SEND_HOURS * 3600 * 1000;
+  return canonical(raw);
+}
+async function proposeTransfer(walletHex, toHex, sun) {
+  if (walletHex === toHex) throw new Error("Alıcı cüzdanın kendisi olamaz.");
+  NET = NETS.nile;
+  await requireNile();
+  const a = await api("/wallet/getaccount", { address: walletHex });
+  const perm = (a.active_permission || []).find(x => x.id === PERMISSION_ID);
+  if (!perm) throw new Error("Bu cüzdanda çoklu imza izni (aktif izin 2) yok.");
+  if (!allowsTransfer(String(perm.operations || "").toLowerCase()))
+    throw new Error("Bu cüzdanın harcama izni (2) TRX transferine izin vermiyor.");
+  const have = BigInt(a.balance || 0);
+  if (have < sun + MULTISIG_FEE_SUN)
+    throw new Error("Cüzdanda " + trx(have) + " var; " + trx(sun) + " + 1 TRX çoklu imza ücreti gerekir.");
+  return { v: 1, net: "nile", tx: await buildTransfer(walletHex, toHex, sun), sigs: [] };
+}
+async function startTransfer() {
+  const btn = $("btn-start");
+  btn.disabled = true;
+  try {
+    const walletHex = await base58ToHex($("f-wallet").value), toHex = await base58ToHex($("f-to").value);
+    const sun = parseTrx($("f-amount").value);
+    setStatus('<span class="spin">⏳</span> İşlem Nile\'de kuruluyor…', "info");
+    const p = await proposeTransfer(walletHex, toHex, sun);
+    const d = await verify(p);                     // the check every link gets: what is shown is what is signed
+    if (d.owner !== walletHex || d.to !== toHex || d.amount !== sun)
+      throw new Error("Düğümün kurduğu işlem istenenle aynı değil; link verilmedi.");
+    history.replaceState(null, "", "#" + b64uEncode(JSON.stringify(p)));
+    SEEN = fragment();
+    $("url-field").value = window.location.href;
+    await showLink(p, true);
+  } catch (e) { fail(e); } finally { btn.disabled = false; }
+}
+
+// --- setting up a multisig here: msig_tron.plan / check in the browser. The wallet's SELECTED account becomes
+// the multisig: one AccountPermissionUpdate, signed by that account alone, hands its owner permission and its
+// single active permission (id 2) to M of the owners, every key weight 1. Its own key keeps authority only if
+// it is one of the owners. The chain charges the fee (100 TRX on 2026-11-23) to that account.
+let SETUP = null;    // checked and waiting for its signature: {account, owners: [hex], m, tx, expiration, wallet}
+async function buildUpdate(account, owners, m, ops) {
+  const keys = () => owners.map(address => ({ address, weight: 1 }));
+  const t = await api("/wallet/accountpermissionupdate", {
+    owner_address: account, visible: false,
+    owner: { type: 0, permission_name: "owner", threshold: m, keys: keys() },
+    actives: [{ type: 2, permission_name: "active", threshold: m, operations: ops, keys: keys() }] });
+  if (!t.raw_data) throw new Error("Düğüm izin güncellemesini kurmadı: " + nodeError(t));
+  const raw = JSON.parse(JSON.stringify(t.raw_data));
+  raw.expiration = Number(raw.timestamp || Date.now()) + SETUP_MINUTES * 60 * 1000;
+  return canonical(raw);
+}
+async function readOwners() {           // the form: 1-5 distinct valid addresses and a threshold within them
+  const list = $("f-owners").value.split(/[\s,;]+/).filter(Boolean);
+  if (list.length < 1 || list.length > MAX_KEYS)
+    throw new Error("Sahip sayısı 1 ile " + MAX_KEYS + " arasında olmalı (verilen " + list.length + ").");
+  const owners = [];
+  for (const a of list) owners.push(await base58ToHex(a));
+  if (new Set(owners).size !== owners.length) throw new Error("Aynı sahip adresi iki kez verilmiş.");
+  const m = Number($("f-m").value);
+  if (!Number.isInteger(m) || m < 1 || m > owners.length)
+    throw new Error("Eşik 1 ile " + owners.length + " arasında olmalı.");
+  return { owners, m };
+}
+async function checkSetup() {
+  const btn = $("btn-check");
+  btn.disabled = true; hide("setup-plan"); hide("setup-done"); hide("done-area"); SETUP = null;
+  try {
+    const asked = formNow();
+    const { owners, m } = await readOwners();
+    setStatus('<span class="spin">⏳</span> Cüzdan bağlanıyor…', "info");
+    const w = await wallet();
+    if (!w) { setStatus("Kurulum cüzdan ister: bu sayfayı TronLink'in tarayıcısında aç.", "warn");
+              show("open-area"); show("copy-area"); return; }
+    const me = myHex(w.tronWeb);
+    if (!me) throw new Error("Cüzdanda seçili hesap yok.");
+    if (w.multi && !onNile(w.tronWeb)) throw new Error(NILE_HINT);
+    NET = NETS.nile;
+    await requireNile();
+    for (const o of owners) {           // a contract can never sign: with M = N it would lock the account for good
+      const c = await api("/wallet/getcontract", { value: o });
+      if (c && (c.bytecode || c.contract_address))
+        throw new Error("Bu sahip adresi bir akıllı sözleşme, imza atamaz: " + await hexToBase58(o));
+    }
+    const a = await api("/wallet/getaccount", { address: me });
+    if (!a.address) throw new Error("Bu hesap Nile'de henüz yok: önce ona Nile TRX gönder.");
+    const own = a.owner_permission;
+    if (own && (Number(own.threshold) !== 1 || (own.keys || []).length !== 1 ||
+                String(own.keys[0].address).toLowerCase() !== me))
+      throw new Error("Bu hesabın izinleri zaten değiştirilmiş; bu sayfa yalnız tek imzalı bir hesabı çevirir.");
+    if (m === 1 && owners.length === 1 && owners[0] === me)
+      throw new Error("Bu hesap zaten bu ayarda (tek sahip, kendisi); hiçbir şey imzalanmadı.");
+    const acts = a.active_permission || [];
+    const ops = acts.length === 1 ? String(acts[0].operations || "").toLowerCase() : "";
+    if (!ops) throw new Error("Hesabın harcama (active) izni okunamadı; hiçbir şey imzalanmadı.");
+    if (!allowsTransfer(ops)) throw new Error("Hesabın harcama izni TRX transferine izin vermiyor.");
+    const fee = await chainParam(FEE_KEY), have = BigInt(a.balance || 0);
+    if (have < fee + MARGIN_SUN)
+      throw new Error("Hesapta " + trx(have) + " var; kurulum en az " + trx(fee + MARGIN_SUN) + " ister (" +
+                      trx(fee) + " ağ ücreti + 1 TRX bant).");
+    setStatus('<span class="spin">⏳</span> İzin güncellemesi Nile\'de kuruluyor…', "info");
+    const tx = await buildUpdate(me, owners, m, ops);
+    const d = decodeUpdate(tx.raw_data_hex);
+    checkUpdate(d, me, owners, m, ops);
+    jsonSaysUpdate(tx.raw_data, me, owners, m, ops);
+    await requireNileRef(tx.raw_data_hex);
+    if (formNow() !== asked) throw new Error("Form kontrol sırasında değişti: 🔎 Kontrol et'e yeniden bas.");
+    SETUP = { account: me, owners, m, ops, tx, expiration: d.expiration, wallet: w };
+    $("s-account").textContent = await hexToBase58(d.account);
+    $("s-owners").innerHTML = (await Promise.all(d.owner.keys.map(k => hexToBase58(k.address)))).map(esc).join("<br>");
+    $("s-m").textContent = m + " / " + owners.length + (m === 1 && owners.length > 1 ? " ⚠️ herhangi bir sahip tek başına harcar" : "");
+    $("s-m2").textContent = String(m);
+    $("s-fee").textContent = trx(fee);
+    $("s-balance").textContent = trx(have);
+    $("ack").checked = false; $("btn-setup").disabled = true;
+    show("setup-plan");
+    setStatus("Kontrol tamam: gösterilen, imzalanacak baytlardan okundu. Onay kutusunu işaretle, sonra imzala.", "info");
+  } catch (e) { fail(e); } finally { btn.disabled = false; }
+}
+function formNow() { return $("f-owners").value + "|" + $("f-m").value; }
+function resetSetup() {                 // the form changed after the check: that plan is no longer what is asked
+  SETUP = null; hide("setup-plan"); hide("setup-done");
+  $("ack").checked = false; $("btn-setup").disabled = true;
+}
+async function readBack(S) {            // msig_tron.check() and the mask: what the chain now holds against the ask
+  let problems = [];
+  for (let k = 0; k < 4 && (k === 0 || problems.length); k++) {
+    if (k) await new Promise(r => setTimeout(r, 3000));   // a lagging node still answers the old account: ask again
+    const a = await api("/wallet/getaccount", { address: S.account });
+    const want = S.owners.slice().sort().join(), acts = a.active_permission || [];
+    problems = [];
+    const perms = [["sahiplik", a.owner_permission || {}]].concat(acts.map((p, i) => ["harcama[" + i + "]", p]));
+    for (const [name, p] of perms) {
+      const keys = p.keys || [];
+      if (keys.map(x => String(x.address).toLowerCase()).sort().join() !== want) problems.push(name + " anahtarları farklı");
+      if (Number(p.threshold) !== S.m) problems.push(name + " eşiği " + p.threshold + " (beklenen " + S.m + ")");
+      if (keys.some(x => Number(x.weight) !== 1)) problems.push(name + " içinde ağırlığı 1 olmayan anahtar var");
+    }
+    if (acts.length !== 1 || Number(acts[0].id) !== PERMISSION_ID) problems.push("tek harcama izni (id 2) bekleniyordu");
+    else if (String(acts[0].operations || "").toLowerCase() !== S.ops) problems.push("harcama izninin işlem maskesi farklı");
+  }
+  return problems;
+}
+async function doSetup() {
+  const S = SETUP;                      // this check, and only this one, is what may be signed
+  if (!S || !$("ack").checked) return;
+  const btn = $("btn-setup"), chk = $("btn-check");
+  btn.disabled = true; chk.disabled = true;
+  let sent = false;                     // once broadcast, the same transaction is never offered for signing again
+  try {
+    if (Date.now() >= S.expiration - 30000) throw new Error("Kontrolün süresi doldu: 🔎 Kontrol et'e yeniden bas.");
+    const w = S.wallet;
+    if (myHex(w.tronWeb) !== S.account) throw new Error("Cüzdanda seçili hesap değişti: 🔎 Kontrol et'e yeniden bas.");
+    setStatus('<span class="spin">⏳</span> ' + esc(w.name) + " imza soruyor: cüzdanda onayla…", "info");
+    const unsigned = { visible: false, txID: S.tx.txID, raw_data: S.tx.raw_data, raw_data_hex: S.tx.raw_data_hex };
+    const out = await w.tronWeb.trx.sign(unsigned);
+    if (out && out.txID && out.txID !== S.tx.txID) throw new Error("Cüzdan başka bir işlem imzaladı.");
+    const sig = out && out.signature && String(out.signature[out.signature.length - 1] || "").toLowerCase();
+    if (!/^[0-9a-f]{130}$/.test(sig || "")) throw new Error("Cüzdan imza döndürmedi.");
+    if (SETUP !== S) throw new Error("Form imza sırasında değişti; hiçbir şey gönderilmedi. 🔎 Kontrol et'e yeniden bas.");
+    setStatus('<span class="spin">⏳</span> Nile ağına gönderiliyor…', "info");
+    const r = await api("/wallet/broadcasttransaction", Object.assign({}, S.tx, { signature: [sig] }));
+    if (!r.result) throw new Error("Ağ reddetti: " + String(r.code || "") + " " + nodeError(r));
+    sent = true; SETUP = null;
+    $("scan-link").href = NET.scan + S.tx.txID;
+    setStatus('<span class="spin">⏳</span> Blok bekleniyor…', "info");
+    const info = await waitInfo(S.tx.txID, 90000);
+    if (!info) throw new Error("İşlem 90 saniyede bloğa girmedi; Tronscan'de bak: " + S.tx.txID);
+    if (info.result === "FAILED") throw new Error("Zincir reddetti: " + hexToText(info.resMessage || ""));
+    show("done-area");
+    const problems = await readBack(S);
+    const base = await hexToBase58(S.account);
+    if (problems.length) {
+      setStatus("⚠️ İşlem zincirde ama okunan izinler istenenle uyuşmuyor: " + esc(problems.join("; ")), "error");
+      return;
+    }
+    hide("setup-plan"); show("setup-done");
+    $("f-wallet").value = base;
+    setStatus("✅ Çoklu imzalı cüzdan kuruldu (blok " + esc(info.blockNumber) + "): <span class=\"mono\">" + esc(base) +
+              "</span> — eşik " + S.m + " / " + S.owners.length + ", sahipler zincirden okundu.", "success");
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    setStatus(isUserReject(m) ? "İmza reddedildi." : "Hata: " + esc(m), "error");
+    if (sent) show("done-area");
+    btn.disabled = sent || SETUP !== S || !$("ack").checked;
+  } finally { chk.disabled = false; }
+}
+function startFrom() { hide("done-area"); tab("start"); $("f-to").focus(); }
 
 // --- opening the link inside a wallet ---
 function openInTronLink() {
@@ -388,30 +829,65 @@ async function copyField(fieldId, btnId) {
   else { f.focus(); f.select(); setStatus("Otomatik kopyalanamadı: linke uzun bas → Kopyala.", "warn"); }
 }
 
+function tab(name) {
+  for (const t of ["setup", "start"]) {
+    $(t + "-area").classList.toggle("hidden", t !== name);
+    $("tab-" + t).classList.toggle("on", t === name);
+  }
+  hide("open-area"); hide("copy-area");
+}
+function home() {                       // no link: set up a multisig, or start a transfer from one
+  NET = NETS.nile;
+  $("subtitle").textContent = "Nile test ağında: cüzdan kur, gönderim başlat, sahipler imzalasın";
+  show("home");
+  tab("setup");
+  setStatus("Yeni bir çoklu imzalı cüzdan kur ya da var olan bir cüzdandan gönderim başlat.", "info");
+}
+async function cleanSigs() {            // one signature the chain does not count leaves every later one uncounted
+  let s = await signedBy(P.sigs);
+  if (s.approved.length === P.sigs.length) return { s, dropped: 0 };
+  const kept = [], who = new Set();
+  for (const sig of P.sigs) {           // keep each signature the chain counts on its own, one per signer
+    const a = (await signedBy([sig])).approved[0];
+    if (a && !who.has(a)) { who.add(a); kept.push(sig); }
+  }
+  const dropped = P.sigs.length - kept.length;
+  P.sigs = kept;
+  s = await signedBy(P.sigs);
+  return { s, dropped };
+}
+async function showLink(p, fresh) {     // a link -- made here (fresh) or by the bot: checked, shown, offered
+  hide("home"); hide("done-area"); show("btn-new");
+  P = p;
+  P.sigs = (Array.isArray(P.sigs) ? P.sigs : []).map(x => String(x).toLowerCase()).filter(x => /^[0-9a-f]{130}$/.test(x));
+  DETAIL = await verify(P);
+  PERM = await permission(DETAIL.owner);
+  const { s, dropped } = await cleanSigs();
+  await render(s);
+  const info = await api("/wallet/gettransactioninfobyid", { value: P.tx.txID });
+  if (info && info.blockNumber) return done(info);
+  if (Date.now() >= DETAIL.expiration) { setStatus("⌛ Bu işlemin süresi doldu: yeni bir gönderim başlat.", "error"); return; }
+  const note = dropped ? " (Zincirin saymadığı " + dropped + " imza linkten çıkarıldı.)" : "";
+  if (s.weight >= PERM.threshold) { setStatus("İmzalar tamam: ağa gönderilebilir." + note, "info"); show("btn-send"); return; }
+  const inWallet = Boolean(trustTronWeb() || window.tronLink || window.tronWeb);
+  if (fresh) share("🧾 Link hazır (imza 0 / " + PERM.threshold + "). Sahiplere gönder; sahiplerden biriysen önce sen imzala.", "info");
+  else if (inWallet) setStatus("İmza: " + s.weight + " / " + PERM.threshold + ". Sahiplerden biriysen imzala." + note, "info");
+  else setStatus("Bu linki kendi cüzdanının (TronLink / Trust Wallet) tarayıcısında aç." + note, "info");
+  if (inWallet) show("btn-sign");
+  else { show("open-area"); if (!fresh) show("copy-area"); }
+}
 async function init() {
   $("url-field").value = window.location.href;
   try {
-    P = readPayload();
-    if (!P) { setStatus("Bu sayfa bottan gelen bir imza linkiyle açılır (<code>/msig gonder</code>).", "info"); return; }
-    P.sigs = (Array.isArray(P.sigs) ? P.sigs : []).map(x => String(x).toLowerCase()).filter(x => /^[0-9a-f]{130}$/.test(x));
-    DETAIL = await verify(P);
-    PERM = await permission(DETAIL.owner);
-    const s = await signedBy(P.sigs);
-    await render(s);
-    const info = await api("/wallet/gettransactioninfobyid", { value: P.tx.txID });
-    if (info && info.blockNumber) return done();
-    if (Date.now() >= DETAIL.expiration) { setStatus("⌛ Bu işlemin süresi doldu: bottan yeni link iste.", "error"); return; }
-    if (s.weight >= PERM.threshold) { setStatus("İmzalar tamam: ağa gönderilebilir.", "info"); show("btn-send"); return; }
-    if (trustTronWeb() || window.tronLink || window.tronWeb) {
-      setStatus("İmza: " + s.weight + " / " + PERM.threshold + ". Sahiplerden biriysen imzala.", "info");
-      show("btn-sign");
-    } else {
-      setStatus("Bu linki kendi cüzdanının (TronLink / Trust Wallet) tarayıcısında aç.", "info");
-      show("open-area"); show("copy-area");
-    }
+    const p = readPayload();
+    if (!p) return home();
+    await showLink(p, false);
   } catch (e) { fail(e); }
 }
+function fragment() { return (window.location.hash || "").slice(1).split("?")[0].split("&")[0]; }
+let SEEN = fragment();
 window.addEventListener("load", () => setTimeout(init, 300));
+window.addEventListener("hashchange", () => { if (fragment() !== SEEN) window.location.reload(); });   // a link pasted over this one
 </script>
 </body>
 </html>
