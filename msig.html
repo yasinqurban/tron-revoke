@@ -57,6 +57,11 @@
   .ack { display: flex; gap: 10px; align-items: flex-start; color: var(--text); margin-top: 14px; }
   .ack input { margin-top: 4px; flex-shrink: 0; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .net { display: flex; gap: 8px; margin-top: 4px; }
+  .net label { flex: 1; display: flex; gap: 8px; align-items: center; margin-top: 0; padding: 10px;
+               border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
+  .danger { border: 1px solid var(--accent); background: rgba(255,6,10,0.10); border-radius: 12px; padding: 12px;
+            margin-top: 12px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -73,7 +78,14 @@
 
     <div id="setup-area" class="hidden">
       <div class="hint">Cüzdanında SEÇİLİ hesap çoklu imzalı cüzdana dönüşür: sahiplik ve harcama yetkisi aşağıdaki
-        sahiplere geçer. Bunun için yeni bir hesap aç, ona Nile TRX gönder (kurulum 100 TRX ağ ücreti ister). TronLink önerilir.</div>
+        sahiplere geçer. Bunun için yeni bir hesap aç ve ona TRX gönder (kurulum 100 TRX ağ ücreti ister). TronLink önerilir.</div>
+      <label>Ağ</label>
+      <div class="net">
+        <label><input type="radio" name="f-net" id="net-nile" value="nile" checked autocomplete="off" onchange="pickNet()"> 🧪 Nile (test)</label>
+        <label><input type="radio" name="f-net" id="net-mainnet" value="mainnet" autocomplete="off" onchange="pickNet()"> ⚠️ Ana ağ (gerçek TRX)</label>
+      </div>
+      <div id="mainnet-note" class="danger hidden">⚠️ <b>TRON ana ağ: gerçek para.</b> Kurulum 100 TRX yakar, geri
+        gelmez; eşik en az 2 olmalı. Aynı kurulumu önce Nile'de dene.</div>
       <label for="f-owners">Sahip adresleri (her satıra bir T… adres, en çok 5)</label>
       <textarea id="f-owners" class="field mono" spellcheck="false" autocapitalize="off" autocomplete="off"
                 oninput="resetSetup()"></textarea>
@@ -82,19 +94,35 @@
       <button id="btn-check" onclick="checkSetup()">🔎 Kontrol et</button>
       <div id="setup-plan" class="hidden">
         <div class="box">
+          <div class="row"><span class="label">Ağ</span><span class="value" id="s-net"></span></div>
           <div class="row"><span class="label">Çevrilecek hesap</span><span class="value mono" id="s-account"></span></div>
           <div class="row"><span class="label">Sahipler</span><span class="value mono" id="s-owners"></span></div>
           <div class="row"><span class="label">Eşik</span><span class="value" id="s-m"></span></div>
           <div class="row"><span class="label">Ağ ücreti</span><span class="value" id="s-fee"></span></div>
           <div class="row"><span class="label">Bakiye</span><span class="value" id="s-balance"></span></div>
         </div>
-        <label class="ack"><input type="checkbox" id="ack" onchange="$('btn-setup').disabled = !this.checked || !SETUP">
+        <div id="s-extra" class="danger hidden"></div>
+        <label class="ack"><input type="checkbox" id="ack" onchange="setupReady()">
           <span>Bu hesabın yönetimini yukarıdaki sahiplere devrediyorum. Bundan sonra bu hesapla tek başıma işlem
           yapamam; geri almak da <b id="s-m2"></b> imza ister.</span></label>
+        <div id="mainnet-ack" class="danger hidden">
+          <b>Ana ağ onayı.</b> 100 TRX ağ ücreti gerçek paradır, geri gelmez. Bu hesaptaki her şey (TRX, USDT, diğer
+          tokenlar) bundan sonra yalnız <b id="s-m3"></b> imzayla çıkar. Sahip adreslerinden biri borsa yatırma adresiyse
+          (Binance, OKX…) o sahip hiçbir zaman imza atamaz. Elde kalan anahtar sayısı eşiğin altına düşerse para kalıcı
+          olarak kilitlenir.
+          <label for="f-last4">Onay için çevrilecek hesabın son 4 karakterini yaz</label>
+          <input id="f-last4" class="field mono" maxlength="4" autocomplete="off" spellcheck="false" autocapitalize="off"
+                 oninput="setupReady()">
+          <label class="ack hidden" id="mn-row"><input type="checkbox" id="ack-mn" onchange="setupReady()">
+            <span>Eşik sahip sayısına eşit (M = N): TEK bir anahtar kaybolursa bile para kalıcı olarak kilitlenir.
+            Bunu bilerek kuruyorum.</span></label>
+        </div>
         <button id="btn-setup" class="btn-sign" disabled onclick="doSetup()">✍️ İmzala ve Kur</button>
       </div>
       <div id="setup-done" class="hidden">
-        <button onclick="startFrom()">📤 Bu cüzdandan gönderim başlat</button>
+        <button id="btn-from" onclick="startFrom()">📤 Bu cüzdandan gönderim başlat</button>
+        <div id="mainnet-done" class="hint hidden">Ana ağda gönderimleri TronLink'in kendi çoklu imza özelliğiyle yap:
+          bu sayfa gönderim linklerini yalnız Nile'de imzalatır.</div>
       </div>
     </div>
 
@@ -150,18 +178,29 @@
 
 <script>
 "use strict";
-// A TRON multisig on Nile from one page (Justlend-DEX v1.147.0, source web/msig.html, published as
+// A TRON multisig from one page (Justlend-DEX v1.148.0, source web/msig.html, published as
 // tron-revoke/msig.html; the bot checks the published bytes against its pinned sha256). Without a link it
-// SETS UP a multisig -- the wallet's selected account hands its owner and active permissions to M-of-N owners,
-// signed by that account -- and STARTS a transfer: the UNSIGNED one under the active permission (id 2), put in
-// this page's #fragment, exactly what the bot's /msig gonder makes. With a link, each co-owner opens it in their
-// own wallet (TronLink or Trust Wallet) and signs; the page carries the signatures forward in a new link, and
-// when they reach the threshold it broadcasts to Nile itself. No key, no server, no third-party script: the
-// wallet signs, TronGrid's Nile API answers (its CORS allows a browser). The numbers mirror services/msig_tron.py.
-const NETS = {
+// SETS UP a multisig -- on Nile or, since v1.148.0 (operator sr87), on TRON mainnet: the wallet's selected account
+// hands its owner and active permissions to M-of-N owners, signed by that account -- and STARTS a transfer on
+// Nile: the UNSIGNED one under the active permission (id 2), put in this page's #fragment, exactly what the bot's
+// /msig gonder makes. With a link, each co-owner opens it in their own wallet (TronLink or Trust Wallet) and
+// signs; the page carries the signatures forward in a new link, and when they reach the threshold it broadcasts
+// to Nile itself. A LINK is Nile only (NETS); only the setup reads SETUP_NETS. No key, no server, no third-party
+// script: the wallet signs, TronGrid answers (its CORS allows a browser, mainnet too). The numbers mirror
+// services/msig_tron.py.
+const NETS = {      // a LINK -- and a start -- is signed on Nile only: verify() names Nile, never looks up p.net
   nile: { api: "https://nile.trongrid.io", scan: "https://nile.tronscan.org/#/transaction/",
           genesis: "0000000000000000d698d4192c56cb6be724a558448e2684802de4d6cd8690dc",
-          name: "TRON Nile (test ağı)" },
+          name: "TRON Nile (test ağı)", on: "Nile'de", to: "Nile'ye" },
+};
+// Mainnet (operator sr87, 2026-11-24): the SETUP may run there, and every Nile signature asks it, read-only,
+// that the bytes are NOT a mainnet transaction (requireNotMainnet, security review 2026-11-24 #1).
+const MAINNET = { api: "https://api.trongrid.io", scan: "https://tronscan.org/#/transaction/",
+                  genesis: "00000000000000001ebf88508a03865c71d452e25f4d51194196a1d22b6653dc",
+                  name: "TRON ana ağ (gerçek para)", on: "ana ağda", to: "Ana ağa" };
+const SETUP_NETS = {                 // the setup's table: its one reader is checkSetup, never a link
+  nile: NETS.nile,
+  mainnet: MAINNET,
 };
 const PERMISSION_ID = 2;
 const SEND_HOURS = 12;                    // msig_tron.SEND_HOURS: a proposal stays signable this long (chain max 24 h)
@@ -395,69 +434,107 @@ function linkWith(sigs) {
 }
 
 // --- Nile, asked directly ---
-async function api(path, body) {
-  const r = await fetch(NET.api + path, { method: "POST", headers: { "Content-Type": "application/json" },
+async function api(path, body, net) {   // the setup names its chain (net); every link and start works on NET
+  const n = net || NET;
+  for (let k = 0; ; k++) {              // keyless TronGrid answers a burst with 429 (mainnet, 2026-11-24): wait, ask again
+    const r = await fetch(n.api + path, { method: "POST", headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify(body) });
-  if (!r.ok) throw new Error("Nile API HTTP " + r.status);
-  return r.json();
+    if (r.status === 429 && k < 3) { await new Promise(res => setTimeout(res, 1500 * (k + 1))); continue; }
+    if (!r.ok) throw new Error(n.name + " API HTTP " + r.status);
+    return r.json();
+  }
 }
-async function requireNile() {          // the chain is asked, not trusted
-  const g = await api("/wallet/getblockbynum", { num: 0 });
-  if ((g.blockID || "") !== NET.genesis) throw new Error("Bağlanılan ağ Nile değil (genesis farklı).");
+async function requireChain(net) {      // the chain is asked, not trusted: its genesis block names it
+  const g = await api("/wallet/getblockbynum", { num: 0 }, net);
+  if ((g.blockID || "") !== net.genesis) throw new Error("Bağlanılan ağ " + net.name + " değil (genesis farklı).");
+}
+async function requireNile() {          // a link and a start are signed on Nile only
+  if (NET !== NETS.nile) throw new Error("Bu sayfa linkleri yalnızca Nile test ağında imzalatır.");
+  await requireChain(NET);
 }
 function nodeError(r) {                 // TronGrid says why in one of several places, often as hex
   const m = String((r && (r.Error || (r.result && r.result.message) || r.message)) || "");
   return /^(?:[0-9a-f]{2})+$/i.test(m) ? hexToText(m) : m;
 }
-async function chainParam(key) {
-  const r = await api("/wallet/getchainparameters", {});
+async function chainParam(key, net) {
+  const r = await api("/wallet/getchainparameters", {}, net);
   const row = (r.chainParameter || []).find(x => x.key === key);
   if (!row) throw new Error("Zincir parametresi okunamadı (" + key + "); hiçbir şey imzalanmadı.");
   return BigInt(row.value || 0);
 }
-async function canonical(raw) {         // the node serializes raw_data; the caller then decodes those bytes itself
-  const w = await api("/wallet/getsignweight", { raw_data: raw, visible: false });
+async function canonical(raw, net) {    // the node serializes raw_data; the caller then decodes those bytes itself
+  const w = await api("/wallet/getsignweight", { raw_data: raw, visible: false }, net);
   const t = (w.transaction || {}).transaction || {};
   if (!/^(?:[0-9a-f]{2})+$/i.test(t.raw_data_hex || "") ||
       bytesToHex(await sha256(hexToBytes(t.raw_data_hex))) !== t.txID)
     throw new Error("Düğüm işlemi kuramadı: " + (nodeError(w) || "txID tutmuyor"));
   return { visible: false, txID: t.txID, raw_data: t.raw_data, raw_data_hex: t.raw_data_hex };
 }
-async function waitInfo(txid, ms) {     // the block that holds it, or null after `ms`
+async function waitInfo(txid, ms, net, path) {   // the block that holds it, or null after `ms`
   const end = Date.now() + ms;
   while (Date.now() < end) {
     try {
-      const i = await api("/wallet/gettransactioninfobyid", { value: txid });
+      const i = await api(path || "/wallet/gettransactioninfobyid", { value: txid }, net);
       if (i && i.blockNumber) return i;
     } catch (e) { /* one failed read is not an answer: ask again */ }
     await new Promise(r => setTimeout(r, 3000));
   }
   return null;
 }
-async function requireNileRef(rawHex) {
+async function requireRef(rawHex, net) {
   // TaPoS (security review 2026-11-24): only ref_block_bytes (raw 1, the block number's low 2 bytes) and
   // ref_block_hash (raw 4, bytes 8-16 of that block's id) tie signed bytes to ONE chain; getsignweight ignores
-  // them. They must name a recent Nile block, or a signature collected here could be broadcast on mainnet.
+  // them. They must name a recent block of THIS chain (`net`), or a signature collected here could be broadcast
+  // on the other one -- a Nile link on mainnet, a mainnet setup on Nile.
   const raw = pbFields(hexToBytes(rawHex));
   const rb = one(raw, 1, "bytes"), rh = one(raw, 4, "bytes");
   if (rb.length !== 2 || rh.length !== 8) throw new Error("İşlemin blok referansı (ref_block) eksik ya da bozuk.");
   for (let k = 0; k < 3; k++) {                    // a lagging node may not have the block yet: ask again
     if (k) await new Promise(r => setTimeout(r, 3000));
-    const head = await api("/wallet/getnowblock", {});
+    const head = await api("/wallet/getnowblock", {}, net);
     const top = Number((((head || {}).block_header || {}).raw_data || {}).number || 0);
     let n = top - (top % 65536) + rb[0] * 256 + rb[1];
     if (n > top + 100) n -= 65536;
-    const b = n > 0 ? await api("/wallet/getblockbynum", { num: n }) : {};
+    const b = n > 0 ? await api("/wallet/getblockbynum", { num: n }, net) : {};
     if (!b.blockID) continue;
     if (String(b.blockID).slice(16, 32) === bytesToHex(rh)) return;
     break;
   }
-  throw new Error("İşlem Nile'nin yakın bir bloğuna bağlı değil (ref_block): başka bir ağın işlemi olabilir. İmzalanmadı.");
+  throw new Error("İşlemin blok referansı (ref_block) " + net.name + " zincirinde yakın bir bloğu göstermiyor: " +
+                  "başka bir ağın işlemi olabilir. İmzalanmadı.");
+}
+async function requireNileRef(rawHex) { // a link and a start: Nile's blocks only
+  await requireRef(rawHex, NETS.nile);
+}
+async function requireNotMainnet(rawHex) {
+  // Security review 2026-11-24 (v1.148.0) #1: Nile's node vouches for its own blocks, so a lying or misrouted one
+  // could pass MAINNET bytes as Nile's -- and mainnet multisigs now come from this very page. A transaction valid
+  // on mainnet names a recent real mainnet block (TaPoS), so mainnet's own node is asked, read-only, for the block
+  // at the slot ref_block_bytes names; the same ref_block_hash there refuses the signature. Fails closed: no
+  // answer from mainnet, no signature.
+  const raw = pbFields(hexToBytes(rawHex));
+  const rb = one(raw, 1, "bytes"), rh = one(raw, 4, "bytes");
+  if (rb.length !== 2 || rh.length !== 8) throw new Error("İşlemin blok referansı (ref_block) eksik ya da bozuk.");
+  await requireChain(MAINNET);
+  for (let k = 0; k < 3; k++) {                    // a slot just ahead of this node's head: wait for it, ask again
+    if (k) await new Promise(r => setTimeout(r, 3000));
+    const head = await api("/wallet/getnowblock", {}, MAINNET);
+    const top = Number((((head || {}).block_header || {}).raw_data || {}).number || 0);
+    let n = top - (top % 65536) + rb[0] * 256 + rb[1];
+    if (n > top + 100) n -= 65536;
+    if (!top || n > top) continue;
+    const b = await api("/wallet/getblockbynum", { num: n }, MAINNET);
+    if (!b.blockID) continue;
+    if (String(b.blockID).slice(16, 32) === bytesToHex(rh))
+      throw new Error("Bu baytlar ana ağdaki bir bloğa bağlı: ana ağda geçerli olabilir, Nile diye imzalatılmaz.");
+    return;                                        // mainnet's block at that slot is another one: no spend there
+  }
+  throw new Error("Ana ağ okunamadı ya da geride; güvenlik için imza istenmedi. Birkaç dakika sonra yeniden dene.");
 }
 async function verify(p) {
   // What the wallet will sign must be what this page shows, on the network it names.
   if (!p || p.v !== 1) throw new Error("Bağlantı bozuk ya da eski sürüm.");
-  NET = NETS[p.net];
+  NET = p.net === "nile" ? NETS.nile : null;     // named, never looked up: no table key reaches a link
   if (!NET) throw new Error("Bu sayfa yalnızca Nile test ağında imzalatır.");
   const tx = p.tx || {};
   if (!/^(?:[0-9a-f]{2})+$/i.test(tx.raw_data_hex || "")) throw new Error("İşlem baytları geçerli hex değil.");
@@ -480,7 +557,10 @@ async function verify(p) {
   try { same = same && BigInt(v.amount) === d.amount; } catch (e) { same = false; }
   if (!same) throw new Error("Bağlantıdaki işlem metni imzalanacak baytlarla aynı değil.");
   await requireNile();
-  if (d.expiration > Date.now()) await requireNileRef(tx.raw_data_hex);   // an expired one is never offered for signing
+  if (d.expiration > Date.now()) {                 // an expired one is never offered for signing
+    await requireNileRef(tx.raw_data_hex);
+    await requireNotMainnet(tx.raw_data_hex);      // review 2026-11-24 #1: nor are bytes that would spend on mainnet
+  }
   return { owner: d.owner, to: d.to, amount: d.amount, expiration: d.expiration };
 }
 async function permission(ownerHex) {
@@ -539,6 +619,11 @@ function myHex(tronWeb) {
 }
 const NILE_HINT = "TronLink'te ağı Nile'ye geçir (Ayarlar → Düğüm/Ağ → Nile), sonra sayfayı yenile.";
 function onNile(tronWeb) { return String(((tronWeb || {}).fullNode || {}).host || "").includes("nile"); }
+const MAINNET_HINT = "TronLink'te ağı TRON ana ağa (Mainnet) geçir, sonra sayfayı yenile.";
+function walletNet(tronWeb) {           // which chain TronLink's node is on, by its host: nile, shasta, else mainnet
+  const h = String(((tronWeb || {}).fullNode || {}).host || "").toLowerCase();
+  return !h ? "" : h.includes("nile") ? "nile" : h.includes("shasta") ? "shasta" : "mainnet";
+}
 
 async function sign() {
   hide("btn-sign");
@@ -634,6 +719,7 @@ async function proposeTransfer(walletHex, toHex, sun) {
   return { v: 1, net: "nile", tx: await buildTransfer(walletHex, toHex, sun), sigs: [] };
 }
 async function startTransfer() {
+  if (BUSY) { setStatus("Önce süren kurulum bitsin.", "warn"); return; }   // review 2026-11-24 (f): one flow at a time
   const btn = $("btn-start");
   btn.disabled = true;
   try {
@@ -654,27 +740,29 @@ async function startTransfer() {
 // --- setting up a multisig here: msig_tron.plan / check in the browser. The wallet's SELECTED account becomes
 // the multisig: one AccountPermissionUpdate, signed by that account alone, hands its owner permission and its
 // single active permission (id 2) to M of the owners, every key weight 1. Its own key keeps authority only if
-// it is one of the owners. The chain charges the fee (100 TRX on 2026-11-23) to that account.
-let SETUP = null;    // checked and waiting for its signature: {account, owners: [hex], m, tx, expiration, wallet}
-async function buildUpdate(account, owners, m, ops) {
+// it is one of the owners. The chain charges the fee (100 TRX on 2026-11-23) to that account. Every node call of
+// the setup names the network the form chose (SETUP_NETS, v1.148.0) and never touches NET.
+let SETUP = null;    // checked, waiting for its signature: {key, net, account, base58, owners: [hex], m, tx, expiration, wallet}
+let BUSY = false;    // a setup is being signed or sent: no second popup, no re-enabled button, no start meanwhile
+async function buildUpdate(account, owners, m, ops, net) {
   const keys = () => owners.map(address => ({ address, weight: 1 }));
   const t = await api("/wallet/accountpermissionupdate", {
     owner_address: account, visible: false,
     owner: { type: 0, permission_name: "owner", threshold: m, keys: keys() },
-    actives: [{ type: 2, permission_name: "active", threshold: m, operations: ops, keys: keys() }] });
+    actives: [{ type: 2, permission_name: "active", threshold: m, operations: ops, keys: keys() }] }, net);
   if (!t.raw_data) throw new Error("Düğüm izin güncellemesini kurmadı: " + nodeError(t));
   const raw = JSON.parse(JSON.stringify(t.raw_data));
-  raw.expiration = Number(raw.timestamp || Date.now()) + SETUP_MINUTES * 60 * 1000;
-  return canonical(raw);
+  raw.expiration = Date.now() + SETUP_MINUTES * 60 * 1000;   // review 2026-11-24 #4: this clock, not the node's
+  return canonical(raw, net);
 }
-async function readOwners() {           // the form: 1-5 distinct valid addresses and a threshold within them
-  const list = $("f-owners").value.split(/[\s,;]+/).filter(Boolean);
+async function readOwners(text, mText) {   // the form as read ONCE: 1-5 distinct valid addresses, a threshold within them
+  const list = text.split(/[\s,;]+/).filter(Boolean);
   if (list.length < 1 || list.length > MAX_KEYS)
     throw new Error("Sahip sayısı 1 ile " + MAX_KEYS + " arasında olmalı (verilen " + list.length + ").");
   const owners = [];
   for (const a of list) owners.push(await base58ToHex(a));
   if (new Set(owners).size !== owners.length) throw new Error("Aynı sahip adresi iki kez verilmiş.");
-  const m = Number($("f-m").value);
+  const m = Number(mText);
   if (!Number.isInteger(m) || m < 1 || m > owners.length)
     throw new Error("Eşik 1 ile " + owners.length + " arasında olmalı.");
   return { owners, m };
@@ -683,24 +771,29 @@ async function checkSetup() {
   const btn = $("btn-check");
   btn.disabled = true; hide("setup-plan"); hide("setup-done"); hide("done-area"); SETUP = null;
   try {
-    const asked = formNow();
-    const { owners, m } = await readOwners();
+    // review 2026-11-24 #3: the form is read once, here, with no await in between; formNow() is compared again
+    // after the last await below, so what is shown and kept is exactly what was asked
+    const asked = formNow(), key = netKey(), ownersText = $("f-owners").value, mText = $("f-m").value;
+    const net = SETUP_NETS[key];         // asked like the owners: chosen on the form, never defaulted here
+    if (!net) throw new Error("Ağ seç: Nile ya da ana ağ.");
+    const { owners, m } = await readOwners(ownersText, mText);
+    if (key === "mainnet" && m < 2)
+      throw new Error("Ana ağda eşik en az 2 olmalı: eşik 1 iken sahiplerden herhangi biri tek başına harcar.");
     setStatus('<span class="spin">⏳</span> Cüzdan bağlanıyor…', "info");
     const w = await wallet();
     if (!w) { setStatus("Kurulum cüzdan ister: bu sayfayı TronLink'in tarayıcısında aç.", "warn");
               show("open-area"); show("copy-area"); return; }
     const me = myHex(w.tronWeb);
     if (!me) throw new Error("Cüzdanda seçili hesap yok.");
-    if (w.multi && !onNile(w.tronWeb)) throw new Error(NILE_HINT);
-    NET = NETS.nile;
-    await requireNile();
+    if (w.multi && walletNet(w.tronWeb) !== key) throw new Error(key === "nile" ? NILE_HINT : MAINNET_HINT);
+    await requireChain(net);
     for (const o of owners) {           // a contract can never sign: with M = N it would lock the account for good
-      const c = await api("/wallet/getcontract", { value: o });
+      const c = await api("/wallet/getcontract", { value: o }, net);
       if (c && (c.bytecode || c.contract_address))
         throw new Error("Bu sahip adresi bir akıllı sözleşme, imza atamaz: " + await hexToBase58(o));
     }
-    const a = await api("/wallet/getaccount", { address: me });
-    if (!a.address) throw new Error("Bu hesap Nile'de henüz yok: önce ona Nile TRX gönder.");
+    const a = await api("/wallet/getaccount", { address: me }, net);
+    if (!a.address) throw new Error("Bu hesap " + net.on + " henüz yok: önce ona TRX gönder.");
     const own = a.owner_permission;
     if (own && (Number(own.threshold) !== 1 || (own.keys || []).length !== 1 ||
                 String(own.keys[0].address).toLowerCase() !== me))
@@ -711,39 +804,68 @@ async function checkSetup() {
     const ops = acts.length === 1 ? String(acts[0].operations || "").toLowerCase() : "";
     if (!ops) throw new Error("Hesabın harcama (active) izni okunamadı; hiçbir şey imzalanmadı.");
     if (!allowsTransfer(ops)) throw new Error("Hesabın harcama izni TRX transferine izin vermiyor.");
-    const fee = await chainParam(FEE_KEY), have = BigInt(a.balance || 0);
+    const fee = await chainParam(FEE_KEY, net), have = BigInt(a.balance || 0);
     if (have < fee + MARGIN_SUN)
       throw new Error("Hesapta " + trx(have) + " var; kurulum en az " + trx(fee + MARGIN_SUN) + " ister (" +
                       trx(fee) + " ağ ücreti + 1 TRX bant).");
-    setStatus('<span class="spin">⏳</span> İzin güncellemesi Nile\'de kuruluyor…', "info");
-    const tx = await buildUpdate(me, owners, m, ops);
+    setStatus('<span class="spin">⏳</span> İzin güncellemesi ' + esc(net.on) + " kuruluyor…", "info");
+    const tx = await buildUpdate(me, owners, m, ops, net);
     const d = decodeUpdate(tx.raw_data_hex);
+    if (d.expiration > Date.now() + (SETUP_MINUTES + 2) * 60 * 1000)   // review #4: the node may not stretch it
+      throw new Error("Düğüm kurulumun geçerlilik süresini uzattı; hiçbir şey imzalanmadı.");
     checkUpdate(d, me, owners, m, ops);
     jsonSaysUpdate(tx.raw_data, me, owners, m, ops);
-    await requireNileRef(tx.raw_data_hex);
+    await requireRef(tx.raw_data_hex, net);
+    if (key === "nile") await requireNotMainnet(tx.raw_data_hex);   // review #1: a Nile rehearsal never spends mainnet
+    const base58 = await hexToBase58(d.account);
+    const shown = (await Promise.all(d.owner.keys.map(k => hexToBase58(k.address)))).map(esc).join("<br>");
     if (formNow() !== asked) throw new Error("Form kontrol sırasında değişti: 🔎 Kontrol et'e yeniden bas.");
-    SETUP = { account: me, owners, m, ops, tx, expiration: d.expiration, wallet: w };
-    $("s-account").textContent = await hexToBase58(d.account);
-    $("s-owners").innerHTML = (await Promise.all(d.owner.keys.map(k => hexToBase58(k.address)))).map(esc).join("<br>");
+    // no await from here to show(): what was compared is what is kept and shown
+    SETUP = { key, net, account: me, base58, owners, m, ops, tx, expiration: d.expiration, wallet: w };
+    $("s-net").textContent = net.name;
+    $("s-account").textContent = base58;
+    $("s-owners").innerHTML = shown;
     $("s-m").textContent = m + " / " + owners.length + (m === 1 && owners.length > 1 ? " ⚠️ herhangi bir sahip tek başına harcar" : "");
-    $("s-m2").textContent = String(m);
+    $("s-m2").textContent = String(m); $("s-m3").textContent = String(m);
     $("s-fee").textContent = trx(fee);
     $("s-balance").textContent = trx(have);
-    $("ack").checked = false; $("btn-setup").disabled = true;
+    const tokens = (a.assetV2 || []).filter(x => Number(x.value) > 0).length;   // TRC20 is not listed here
+    const extra = key === "mainnet" && (have > fee + MARGIN_SUN + 1000000n || tokens > 0);
+    $("s-extra").textContent = extra ? "⚠️ Bu hesapta kurulum ücretinden fazlası var: " + trx(have) +
+      (tokens ? " ve " + tokens + " TRC10 token" : "") + ". Hepsi bundan sonra " + m +
+      " imzayla çıkar; yeni, boş bir hesap önerilir." : "";
+    $("s-extra").classList.toggle("hidden", !extra);
+    $("mainnet-ack").classList.toggle("hidden", key !== "mainnet");
+    $("mn-row").classList.toggle("hidden", !(key === "mainnet" && m === owners.length));
+    $("ack").checked = false; $("ack-mn").checked = false; $("f-last4").value = ""; $("btn-setup").disabled = true;
     show("setup-plan");
-    setStatus("Kontrol tamam: gösterilen, imzalanacak baytlardan okundu. Onay kutusunu işaretle, sonra imzala.", "info");
+    setStatus("Kontrol tamam: gösterilen, imzalanacak baytlardan okundu. " + (key === "mainnet"
+              ? "Onay kutusunu işaretle ve ana ağ onayını doldur, sonra imzala." : "Onay kutusunu işaretle, sonra imzala."), "info");
   } catch (e) { fail(e); } finally { btn.disabled = false; }
 }
-function formNow() { return $("f-owners").value + "|" + $("f-m").value; }
+function netKey() {                     // the setup's network radio: exactly one of the two, or none
+  const nile = $("net-nile").checked, main = $("net-mainnet").checked;
+  return nile === main ? "" : nile ? "nile" : "mainnet";
+}
+function formNow() { return netKey() + "|" + $("f-owners").value + "|" + $("f-m").value; }
 function resetSetup() {                 // the form changed after the check: that plan is no longer what is asked
   SETUP = null; hide("setup-plan"); hide("setup-done");
-  $("ack").checked = false; $("btn-setup").disabled = true;
+  $("ack").checked = false; $("ack-mn").checked = false; $("f-last4").value = ""; $("btn-setup").disabled = true;
 }
-async function readBack(S) {            // msig_tron.check() and the mask: what the chain now holds against the ask
+function pickNet() {                    // the network is part of what is asked: switching it drops the plan
+  resetSetup();
+  $("mainnet-note").classList.toggle("hidden", netKey() !== "mainnet");
+}
+function mainnetAckOk(S) {              // mainnet asks more than a tick: the account's last 4 typed, M = N said twice
+  if (S.key !== "mainnet") return true;
+  return $("f-last4").value.trim() === S.base58.slice(-4) && (S.m < S.owners.length || $("ack-mn").checked);
+}
+function setupReady() { $("btn-setup").disabled = BUSY || !(SETUP && $("ack").checked && mainnetAckOk(SETUP)); }
+async function readBack(S, path) {      // msig_tron.check() and the mask: what the chain now holds against the ask
   let problems = [];
   for (let k = 0; k < 4 && (k === 0 || problems.length); k++) {
     if (k) await new Promise(r => setTimeout(r, 3000));   // a lagging node still answers the old account: ask again
-    const a = await api("/wallet/getaccount", { address: S.account });
+    const a = await api(path || "/wallet/getaccount", { address: S.account }, S.net);
     const want = S.owners.slice().sort().join(), acts = a.active_permission || [];
     problems = [];
     const perms = [["sahiplik", a.owner_permission || {}]].concat(acts.map((p, i) => ["harcama[" + i + "]", p]));
@@ -760,7 +882,8 @@ async function readBack(S) {            // msig_tron.check() and the mask: what 
 }
 async function doSetup() {
   const S = SETUP;                      // this check, and only this one, is what may be signed
-  if (!S || !$("ack").checked) return;
+  if (BUSY || !S || !$("ack").checked || !mainnetAckOk(S)) return;
+  BUSY = true;                          // review 2026-11-24 #2: one run at a time, its button off until it ends
   const btn = $("btn-setup"), chk = $("btn-check");
   btn.disabled = true; chk.disabled = true;
   let sent = false;                     // once broadcast, the same transaction is never offered for signing again
@@ -768,39 +891,55 @@ async function doSetup() {
     if (Date.now() >= S.expiration - 30000) throw new Error("Kontrolün süresi doldu: 🔎 Kontrol et'e yeniden bas.");
     const w = S.wallet;
     if (myHex(w.tronWeb) !== S.account) throw new Error("Cüzdanda seçili hesap değişti: 🔎 Kontrol et'e yeniden bas.");
+    if (w.multi && walletNet(w.tronWeb) !== S.key)    // TronLink switched networks after the check
+      throw new Error((S.key === "nile" ? NILE_HINT : MAINNET_HINT) + " Hiçbir şey imzalanmadı.");
     setStatus('<span class="spin">⏳</span> ' + esc(w.name) + " imza soruyor: cüzdanda onayla…", "info");
     const unsigned = { visible: false, txID: S.tx.txID, raw_data: S.tx.raw_data, raw_data_hex: S.tx.raw_data_hex };
     const out = await w.tronWeb.trx.sign(unsigned);
     if (out && out.txID && out.txID !== S.tx.txID) throw new Error("Cüzdan başka bir işlem imzaladı.");
     const sig = out && out.signature && String(out.signature[out.signature.length - 1] || "").toLowerCase();
     if (!/^[0-9a-f]{130}$/.test(sig || "")) throw new Error("Cüzdan imza döndürmedi.");
-    if (SETUP !== S) throw new Error("Form imza sırasında değişti; hiçbir şey gönderilmedi. 🔎 Kontrol et'e yeniden bas.");
-    setStatus('<span class="spin">⏳</span> Nile ağına gönderiliyor…', "info");
-    const r = await api("/wallet/broadcasttransaction", Object.assign({}, S.tx, { signature: [sig] }));
-    if (!r.result) throw new Error("Ağ reddetti: " + String(r.code || "") + " " + nodeError(r));
+    // review 2026-11-24 #2: the popup may have stayed open while the form, an ack, the account or the network moved
+    if (SETUP !== S || !$("ack").checked || !mainnetAckOk(S) || myHex(w.tronWeb) !== S.account ||
+        (w.multi && walletNet(w.tronWeb) !== S.key))
+      throw new Error("Form, onay, hesap ya da ağ imza sırasında değişti; hiçbir şey gönderilmedi. 🔎 Kontrol et'e yeniden bas.");
+    setStatus('<span class="spin">⏳</span> ' + esc(S.net.to) + " gönderiliyor…", "info");
+    const r = await api("/wallet/broadcasttransaction", Object.assign({}, S.tx, { signature: [sig] }), S.net);
+    if (!r.result && !/DUP_TRANSACTION/i.test(String(r.code || "") + nodeError(r)))   // a repeat of one already sent
+      throw new Error("Ağ reddetti: " + String(r.code || "") + " " + nodeError(r));
     sent = true; SETUP = null;
-    $("scan-link").href = NET.scan + S.tx.txID;
+    $("scan-link").href = S.net.scan + S.tx.txID;
     setStatus('<span class="spin">⏳</span> Blok bekleniyor…', "info");
-    const info = await waitInfo(S.tx.txID, 90000);
+    const info = await waitInfo(S.tx.txID, 90000, S.net);
     if (!info) throw new Error("İşlem 90 saniyede bloğa girmedi; Tronscan'de bak: " + S.tx.txID);
     if (info.result === "FAILED") throw new Error("Zincir reddetti: " + hexToText(info.resMessage || ""));
     show("done-area");
-    const problems = await readBack(S);
+    const solid = S.key === "mainnet";   // review 2026-11-24 #5: real money -- success is told from FINAL blocks only
+    if (solid) {
+      setStatus('<span class="spin">⏳</span> Blokta (' + esc(info.blockNumber) + "); kesinleşmesi bekleniyor (~1 dk)…", "info");
+      const fin = await waitInfo(S.tx.txID, 180000, S.net, "/walletsolidity/gettransactioninfobyid");
+      if (!fin) throw new Error("İşlem blokta ama 3 dakikada kesinleşmedi; Tronscan'de bak: " + S.tx.txID);
+      if (fin.result === "FAILED") throw new Error("Zincir reddetti: " + hexToText(fin.resMessage || ""));
+    }
+    const problems = await readBack(S, solid ? "/walletsolidity/getaccount" : "/wallet/getaccount");
     const base = await hexToBase58(S.account);
     if (problems.length) {
       setStatus("⚠️ İşlem zincirde ama okunan izinler istenenle uyuşmuyor: " + esc(problems.join("; ")), "error");
       return;
     }
     hide("setup-plan"); show("setup-done");
-    $("f-wallet").value = base;
-    setStatus("✅ Çoklu imzalı cüzdan kuruldu (blok " + esc(info.blockNumber) + "): <span class=\"mono\">" + esc(base) +
-              "</span> — eşik " + S.m + " / " + S.owners.length + ", sahipler zincirden okundu.", "success");
+    const nile = S.key === "nile";       // this page starts and signs transfers on Nile only
+    $("btn-from").classList.toggle("hidden", !nile); $("mainnet-done").classList.toggle("hidden", nile);
+    if (nile) $("f-wallet").value = base;
+    setStatus("✅ Çoklu imzalı cüzdan kuruldu (" + esc(S.net.name) + ", blok " + esc(info.blockNumber) +
+              "): <span class=\"mono\">" + esc(base) + "</span> — eşik " + S.m + " / " + S.owners.length +
+              ", sahipler zincirden okundu.", "success");
   } catch (e) {
     const m = String((e && e.message) || e);
     setStatus(isUserReject(m) ? "İmza reddedildi." : "Hata: " + esc(m), "error");
     if (sent) show("done-area");
-    btn.disabled = sent || SETUP !== S || !$("ack").checked;
-  } finally { chk.disabled = false; }
+    btn.disabled = sent || SETUP !== S || !$("ack").checked || !mainnetAckOk(S);
+  } finally { BUSY = false; chk.disabled = false; }
 }
 function startFrom() { hide("done-area"); tab("start"); $("f-to").focus(); }
 
@@ -838,9 +977,10 @@ function tab(name) {
 }
 function home() {                       // no link: set up a multisig, or start a transfer from one
   NET = NETS.nile;
-  $("subtitle").textContent = "Nile test ağında: cüzdan kur, gönderim başlat, sahipler imzalasın";
+  $("subtitle").textContent = "Cüzdan kur (Nile ya da ana ağ); Nile'de gönderim başlat, sahipler imzalasın";
   show("home");
   tab("setup");
+  pickNet();                            // a browser that restored the radio also shows its warning
   setStatus("Yeni bir çoklu imzalı cüzdan kur ya da var olan bir cüzdandan gönderim başlat.", "info");
 }
 async function cleanSigs() {            // one signature the chain does not count leaves every later one uncounted
