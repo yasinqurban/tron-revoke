@@ -74,6 +74,7 @@
     <div class="tabs">
       <button id="tab-setup" onclick="tab('setup')">🔐 Cüzdan kur</button>
       <button id="tab-start" onclick="tab('start')">📤 Gönderim başlat</button>
+      <button id="tab-eth" onclick="tab('eth')">🔷 ETH Safe kur</button>
     </div>
 
     <div id="setup-area" class="hidden">
@@ -136,6 +137,40 @@
       <label for="f-amount">Miktar (TRX)</label>
       <input id="f-amount" class="field" inputmode="decimal" autocomplete="off" placeholder="1">
       <button id="btn-start" onclick="startTransfer()">🧾 İmza linki oluştur</button>
+    </div>
+
+    <div id="eth-area" class="hidden">
+      <div class="hint">Ethereum'da çoklu imzalı cüzdan: bir Safe (v1.4.1) sözleşmesi kurulur, sahipler ve eşik kurulumda
+        yazılır. Kurulumu cüzdanındaki (MetaMask vb.) seçili hesap imzalar ve gas öder; bu hesabın sahip olması
+        gerekmez. Harcamalar Safe'in kendi uygulamasından (app.safe.global) yapılır.</div>
+      <label>Ağ</label>
+      <div class="net">
+        <label><input type="radio" name="e-net" id="e-net-sepolia" value="sepolia" checked autocomplete="off" onchange="ethReset()"> 🧪 Sepolia (test)</label>
+      </div>
+      <label for="e-owners">Sahip adresleri (her satıra bir 0x… adres, en çok 10)</label>
+      <textarea id="e-owners" class="field mono" spellcheck="false" autocapitalize="off" autocomplete="off"
+                oninput="ethReset()"></textarea>
+      <label for="e-m">Eşik: harcamak için gereken imza sayısı</label>
+      <input id="e-m" class="field" type="number" min="1" max="10" value="2" inputmode="numeric" oninput="ethReset()">
+      <button id="btn-eth-check" onclick="ethCheck()">🔎 Kontrol et</button>
+      <div id="eth-plan" class="hidden">
+        <div class="box">
+          <div class="row"><span class="label">Ağ</span><span class="value" id="e-s-net"></span></div>
+          <div class="row"><span class="label">Safe adresi</span><span class="value mono" id="e-s-safe"></span></div>
+          <div class="row"><span class="label">Sahipler</span><span class="value mono" id="e-s-owners"></span></div>
+          <div class="row"><span class="label">Eşik</span><span class="value" id="e-s-m"></span></div>
+          <div class="row"><span class="label">Kuran hesap</span><span class="value mono" id="e-s-from"></span></div>
+          <div class="row"><span class="label">Tahmini ücret</span><span class="value" id="e-s-fee"></span></div>
+        </div>
+        <label class="ack"><input type="checkbox" id="e-ack" onchange="ethReady()">
+          <span>Bu Safe'i yukarıdaki sahiplerle kuruyorum: içine gelen her şey yalnız <b id="e-s-m2"></b> imzayla çıkar;
+          elde kalan anahtar sayısı eşiğin altına düşerse içindekiler kilitlenir.</span></label>
+        <button id="btn-eth-setup" class="btn-sign" disabled onclick="ethSetup()">✍️ İmzala ve Kur</button>
+      </div>
+      <div id="eth-done" class="hidden">
+        <a id="e-app-link" class="btn" href="#" target="_blank" rel="noopener">🔷 Safe uygulamasında aç</a>
+        <a id="e-scan-link" class="btn btn-alt" href="#" target="_blank" rel="noopener">🔎 Kurulum işlemini Etherscan'de gör</a>
+      </div>
     </div>
   </div>
 
@@ -968,8 +1003,242 @@ async function copyField(fieldId, btnId) {
   else { f.focus(); f.select(); setStatus("Otomatik kopyalanamadı: linke uzun bas → Kopyala.", "warn"); }
 }
 
+// ---- Ethereum: a Safe v1.4.1 multisig, SETUP only (Justlend-DEX v1.153.0, operator 2026-11-25) ----
+// The wallet (window.ethereum, EIP-1193) is the only node asked: it names the chain, signs and pays the deploy.
+// The contracts, selectors and calldata are services/msig_eth.py's (pinned by tests):
+// SafeProxyFactory.createProxyWithNonce(SafeL2, setup(owners, M, 0, "", fallback, 0, 0, 0), salt). The Safe's
+// address is known before the signature (CREATE2) and read back after the block. Sepolia only in this version;
+// spends go through Safe's own app. Nothing here shares state with the TRON code above.
+const SAFE_FACTORY = "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67";
+const SAFE_SINGLETON = "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762";
+const SAFE_FALLBACK = "0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99";
+const SAFE_VERSION = "1.4.1";
+const SAFE_MAX_OWNERS = 10;
+const SEL_SETUP = "b63e800d";
+const SEL_CREATE = "1688f0b9";
+const SEL_CREATION_CODE = "53e5d935";
+const SEL_GET_OWNERS = "a0e67e2b";
+const SEL_GET_THRESHOLD = "e75235b8";
+const SEL_VERSION = "ffa1ad74";
+const TOPIC_PROXY_CREATION = "4f51faf6c4561ff95f067657e43439f0f856d97c04d9ec9070a6199ad418e235";
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+const SAFE_CHAINS = {
+  sepolia: { id: "0xaa36a7", name: "Ethereum Sepolia (test ağı)", tx: "https://sepolia.etherscan.io/tx/",
+             app: "https://app.safe.global/home?safe=sep:" },
+};
+let ETH = null;          // the checked plan: what the wallet will be asked to sign, and nothing else
+let ETH_BUSY = false;
+
+const KECCAK_RC = [
+  0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an, 0x8000000080008000n, 0x000000000000808bn,
+  0x0000000080000001n, 0x8000000080008081n, 0x8000000000008009n, 0x000000000000008an, 0x0000000000000088n,
+  0x0000000080008009n, 0x000000008000000an, 0x000000008000808bn, 0x800000000000008bn, 0x8000000000008089n,
+  0x8000000000008003n, 0x8000000000008002n, 0x8000000000000080n, 0x000000000000800an, 0x800000008000000an,
+  0x8000000080008081n, 0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n];
+const KECCAK_ROT = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+function keccakF(s) {                    // Keccak-f[1600] on 25 BigInt lanes, lane (x, y) at x + 5y
+  const M64 = (1n << 64n) - 1n;
+  const rot = (v, n) => n === 0 ? v : ((v << BigInt(n)) | (v >> BigInt(64 - n))) & M64;
+  for (let r = 0; r < 24; r++) {
+    const c = [0, 1, 2, 3, 4].map(x => s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20]);
+    for (let x = 0; x < 5; x++) {
+      const d = c[(x + 4) % 5] ^ rot(c[(x + 1) % 5], 1);
+      for (let y = 0; y < 25; y += 5) s[x + y] ^= d;
+    }
+    const b = new Array(25);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++) b[y + 5 * ((2 * x + 3 * y) % 5)] = rot(s[x + 5 * y], KECCAK_ROT[x + 5 * y]);
+    for (let y = 0; y < 25; y += 5) for (let x = 0; x < 5; x++) s[x + y] = b[x + y] ^ ((~b[(x + 1) % 5 + y] & M64) & b[(x + 2) % 5 + y]);
+    s[0] ^= KECCAK_RC[r];
+  }
+}
+function keccak256(bytes) {              // Ethereum's Keccak-256: pad 0x01 .. 0x80 (not SHA3's 0x06)
+  const rate = 136, s = new Array(25).fill(0n);
+  const p = new Uint8Array(Math.floor(bytes.length / rate + 1) * rate);
+  p.set(bytes); p[bytes.length] ^= 0x01; p[p.length - 1] ^= 0x80;
+  for (let off = 0; off < p.length; off += rate) {
+    for (let i = 0; i < rate / 8; i++) {
+      let lane = 0n;
+      for (let k = 7; k >= 0; k--) lane = (lane << 8n) | BigInt(p[off + 8 * i + k]);
+      s[i] ^= lane;
+    }
+    keccakF(s);
+  }
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 4; i++) { let lane = s[i]; for (let k = 0; k < 8; k++) { out[8 * i + k] = Number(lane & 0xffn); lane >>= 8n; } }
+  return out;
+}
+function keccakHex(hex) { return bytesToHex(keccak256(hexToBytes(hex))); }
+function toChecksum(a) {                 // EIP-55
+  const low = a.slice(2).toLowerCase(), h = bytesToHex(keccak256(new TextEncoder().encode(low)));
+  let out = "0x";
+  for (let i = 0; i < 40; i++) out += parseInt(h[i], 16) >= 8 ? low[i].toUpperCase() : low[i];
+  return out;
+}
+const hex32 = n => BigInt(n).toString(16).padStart(64, "0");
+const addr32 = a => a.slice(2).toLowerCase().padStart(64, "0");
+function readEthOwners(text) {           // = msig_eth.validate: 1..10 distinct 0x addresses, no zero address
+  const raw = String(text).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (raw.length < 1 || raw.length > SAFE_MAX_OWNERS) throw new Error("Sahip sayısı 1 ile " + SAFE_MAX_OWNERS + " arasında olmalı (verilen " + raw.length + ").");
+  const owners = [], seen = new Set();
+  for (const a of raw) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) throw new Error("Geçersiz Ethereum adresi: " + a);
+    const sum = toChecksum(a), body = a.slice(2);
+    if (/[a-f]/.test(body) && /[A-F]/.test(body) && a !== sum) throw new Error("Adresin büyük/küçük harf sağlaması (EIP-55) tutmuyor, yanlış kopyalanmış olabilir: " + a);
+    if (sum === ZERO_ADDR) throw new Error("Sıfır adres sahip olamaz.");
+    if (seen.has(sum.toLowerCase())) throw new Error("Aynı sahip iki kez yazılmış: " + sum);
+    seen.add(sum.toLowerCase());
+    owners.push(sum);
+  }
+  return owners;
+}
+function encodeSetup(owners, m) {        // = msig_eth.setup_data(owners, m)
+  const n = owners.length, ownersAt = 8 * 32, dataAt = ownersAt + 32 * (1 + n);
+  return SEL_SETUP + hex32(ownersAt) + hex32(m) + addr32(ZERO_ADDR) + hex32(dataAt) + addr32(SAFE_FALLBACK)
+    + addr32(ZERO_ADDR) + hex32(0) + addr32(ZERO_ADDR) + hex32(n) + owners.map(addr32).join("") + hex32(0);
+}
+function encodeCreate(init, salt) {      // = msig_eth.create_data(init, salt)
+  const len = init.length / 2;
+  return SEL_CREATE + addr32(SAFE_SINGLETON) + hex32(0x60) + hex32(salt) + hex32(len) + init.padEnd(Math.ceil(len / 32) * 64, "0");
+}
+function predictSafe(creation, init, salt) {   // = msig_eth.predict: CREATE2 as SafeProxyFactory 1.4.1 derives it
+  const initHash = keccakHex(creation + addr32(SAFE_SINGLETON));
+  const salt32 = keccakHex(keccakHex(init) + hex32(salt));
+  return toChecksum("0x" + keccakHex("ff" + SAFE_FACTORY.slice(2).toLowerCase() + salt32 + initHash).slice(24));
+}
+function abiWords(ret) { return String(ret || "").replace(/^0x/, ""); }
+function decodeBytes(ret) {              // one dynamic bytes/string return value, as hex
+  const h = abiWords(ret);
+  if (h.length < 128) throw new Error("Düğümün cevabı boş ya da kısa.");
+  const at = 2 * Number(BigInt("0x" + h.slice(0, 64))), len = Number(BigInt("0x" + h.slice(at, at + 64)));
+  if (h.length < at + 64 + 2 * len) throw new Error("Düğümün cevabı kısa.");
+  return h.slice(at + 64, at + 64 + 2 * len);
+}
+function decodeAddresses(ret) {          // one address[] return value
+  const h = abiWords(ret);
+  if (h.length < 128) throw new Error("Düğümün cevabı boş ya da kısa.");
+  const at = 2 * Number(BigInt("0x" + h.slice(0, 64))), n = Number(BigInt("0x" + h.slice(at, at + 64)));
+  if (n > 50 || h.length < at + 64 + 64 * n) throw new Error("Düğümün cevabı kısa.");
+  return Array.from({ length: n }, (_, i) => toChecksum("0x" + h.slice(at + 88 + 64 * i, at + 128 + 64 * i)));
+}
+function ethAmount(wei) { const s = BigInt(wei).toString().padStart(19, "0"); return s.slice(0, -18) + "," + s.slice(-18, -12) + " ETH"; }
+function ethSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function eth(method, params) { return window.ethereum.request({ method, params: params || [] }); }
+function ethForm() { return "sepolia|" + $("e-owners").value + "|" + $("e-m").value; }
+function ethReset() { ETH = null; hide("eth-plan"); hide("eth-done"); $("e-ack").checked = false; ethReady(); }
+function ethReady() { $("btn-eth-setup").disabled = ETH_BUSY || !ETH || !$("e-ack").checked; }
+async function ethWallet(chain) {        // the selected account, on the chain the plan names -- or a refusal
+  if (!window.ethereum || typeof window.ethereum.request !== "function")
+    throw new Error("Bu tarayıcıda Ethereum cüzdanı yok: sayfayı MetaMask (ya da başka bir EVM cüzdanı) olan bir tarayıcıda aç.");
+  const accounts = await eth("eth_requestAccounts");
+  const from = Array.isArray(accounts) ? String(accounts[0] || "") : "";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(from)) throw new Error("Cüzdan bir hesap vermedi.");
+  const id = String(await eth("eth_chainId")).toLowerCase();
+  if (id !== chain.id) throw new Error("Cüzdan " + chain.name + " ağında değil (chain id " + id + "): cüzdanda ağı değiştir, sonra yeniden kontrol et. Hiçbir şey imzalanmadı.");
+  return toChecksum(from);
+}
+async function hasCode(a) { return abiWords(await eth("eth_getCode", [a, "latest"])).length > 0; }
+async function ethCheck() {
+  if (ETH_BUSY) return;
+  ethReset();
+  ETH_BUSY = true; ethReady();
+  try {
+    const asked = ethForm();
+    const chain = SAFE_CHAINS.sepolia;
+    const owners = readEthOwners($("e-owners").value);
+    const m = Number($("e-m").value);
+    if (!Number.isInteger(m) || m < 1 || m > owners.length) throw new Error("Eşik 1 ile " + owners.length + " arasında olmalı.");
+    setStatus("Cüzdan, ağ ve Safe sözleşmeleri kontrol ediliyor…", "info");
+    const from = await ethWallet(chain);
+    for (const [name, a] of [["SafeProxyFactory", SAFE_FACTORY], ["SafeL2", SAFE_SINGLETON], ["fallback", SAFE_FALLBACK]])
+      if (!(await hasCode(a))) throw new Error(name + " sözleşmesi bu ağda yok (" + a + "); hiçbir şey imzalanmadı.");
+    const version = new TextDecoder().decode(hexToBytes(decodeBytes(await eth("eth_call", [{ to: SAFE_SINGLETON, data: "0x" + SEL_VERSION }, "latest"]))));
+    if (version !== SAFE_VERSION) throw new Error("Safe sürümü " + version + " (beklenen " + SAFE_VERSION + "); hiçbir şey imzalanmadı.");
+    for (const o of owners) {            // a contract cannot sign; a 7702-delegated account (0xef0100 + 20 bytes) can
+      const c = abiWords(await eth("eth_getCode", [o, "latest"])).toLowerCase();
+      if (c && !(c.length === 46 && c.startsWith("ef0100"))) throw new Error("Sahip " + o + " bir sözleşme: bir kişinin cüzdan adresini yaz.");
+    }
+    const salt = BigInt("0x" + bytesToHex(crypto.getRandomValues(new Uint8Array(32))));
+    const init = encodeSetup(owners, m), data = encodeCreate(init, salt);
+    const creation = decodeBytes(await eth("eth_call", [{ to: SAFE_FACTORY, data: "0x" + SEL_CREATION_CODE }, "latest"]));
+    const safe = predictSafe(creation, init, salt);
+    if (await hasCode(safe)) throw new Error("Bu Safe adresi zaten dolu; yeniden kontrol et.");
+    const gas = BigInt(await eth("eth_estimateGas", [{ from, to: SAFE_FACTORY, data: "0x" + data, value: "0x0" }]));
+    const fee = gas * BigInt(await eth("eth_gasPrice"));
+    const balance = BigInt(await eth("eth_getBalance", [from, "latest"]));
+    if (balance < fee) throw new Error("Kuran hesapta yeterli ETH yok: tahmini ücret " + ethAmount(fee) + ", bakiye " + ethAmount(balance) + ".");
+    if (ethForm() !== asked) throw new Error("Form kontrol sırasında değişti; yeniden kontrol et.");
+    ETH = { chain, from, owners, m, data, safe, asked };
+    $("e-s-net").textContent = chain.name;
+    $("e-s-safe").textContent = safe;
+    $("e-s-owners").innerHTML = owners.map(esc).join("<br>");
+    $("e-s-m").textContent = m + " / " + owners.length;
+    $("e-s-m2").textContent = m + " / " + owners.length;
+    $("e-s-from").textContent = from;
+    $("e-s-fee").textContent = "≈ " + ethAmount(fee) + " (gas " + gas + ")";
+    show("eth-plan");
+    setStatus("Safe adresini ve sahipleri oku; doğruysa kutuyu işaretleyip imzala. Cüzdan yalnız bu kurulumu imzalatır.", "info");
+  } catch (e) { fail(e); }
+  finally { ETH_BUSY = false; ethReady(); }
+}
+async function ethSetup() {
+  const S = ETH;
+  if (ETH_BUSY || !S || !$("e-ack").checked) return;
+  ETH_BUSY = true; ethReady();
+  try {
+    if (ethForm() !== S.asked) throw new Error("Form değişti; yeniden kontrol et. Hiçbir şey imzalanmadı.");
+    const from = await ethWallet(S.chain);  // the chain and the account again, right before the signature
+    if (from !== S.from) throw new Error("Cüzdanda başka bir hesap seçili; yeniden kontrol et. Hiçbir şey imzalanmadı.");
+    if (ETH !== S || ethForm() !== S.asked || !$("e-ack").checked) throw new Error("Plan değişti; hiçbir şey imzalanmadı.");
+    setStatus("Cüzdanda kurulum işlemini onayla…", "info");
+    const hash = String(await eth("eth_sendTransaction", [{ from: S.from, to: SAFE_FACTORY, data: "0x" + S.data, value: "0x0" }]));
+    ETH = null; hide("eth-plan");
+    $("e-scan-link").href = S.chain.tx + hash;
+    setStatus("Gönderildi; blok bekleniyor… " + esc(hash), "info");
+    const receipt = await ethReceipt(hash);
+    if (String(receipt.status) !== "0x1") throw new Error("Kurulum işlemi zincirde başarısız (status " + receipt.status + "): " + hash);
+    const proxy = proxyFromLogs(receipt.logs);
+    if (proxy !== S.safe) throw new Error("Kurulan Safe beklenen adres değil (" + proxy + "); Etherscan'de bak: " + hash);
+    await ethReadBack(S);
+    $("e-app-link").href = S.chain.app + S.safe;
+    show("eth-done");
+    setStatus("✅ Safe kuruldu: " + esc(S.safe) + " (" + S.m + " / " + S.owners.length + "). Sahipler, eşik ve Safe sürümü zincirden okundu.", "info");
+  } catch (e) { fail(e); }
+  finally { ETH_BUSY = false; ethReady(); }
+}
+async function ethReceipt(hash) {
+  for (let i = 0; i < 60; i++) {         // 3 minutes; Sepolia makes a block every 12 s
+    const r = await eth("eth_getTransactionReceipt", [hash]);
+    if (r) return r;
+    await ethSleep(3000);
+  }
+  throw new Error("3 dakikada blok gelmedi; işlem hâlâ bekliyor olabilir, Etherscan'de bak: " + hash);
+}
+function proxyFromLogs(logs) {           // = msig_eth.proxy_from_receipt
+  for (const l of logs || []) {
+    const t = l.topics || [];
+    if (String(l.address).toLowerCase() === SAFE_FACTORY.toLowerCase() && t.length >= 2 && String(t[0]).toLowerCase() === "0x" + TOPIC_PROXY_CREATION)
+      return toChecksum("0x" + String(t[1]).slice(-40));
+  }
+  return null;
+}
+async function ethReadBack(S) {          // the Safe itself after the block: owners, threshold, singleton
+  let last = null;
+  for (let i = 0; i < 4; i++) {          // a lagging node answers empty first
+    try {
+      const owners = decodeAddresses(await eth("eth_call", [{ to: S.safe, data: "0x" + SEL_GET_OWNERS }, "latest"]));
+      const m = Number(BigInt(await eth("eth_call", [{ to: S.safe, data: "0x" + SEL_GET_THRESHOLD }, "latest"])));
+      const single = BigInt(await eth("eth_getStorageAt", [S.safe, "0x0", "latest"]));
+      const want = S.owners.map(o => o.toLowerCase()).sort().join(), got = owners.map(o => o.toLowerCase()).sort().join();
+      if (got === want && m === S.m && single === BigInt(SAFE_SINGLETON)) return;
+      last = new Error("Safe'in zincirdeki hâli plandan farklı: sahipler " + owners.join(", ") + ", eşik " + m);
+    } catch (e) { last = e; }
+    await ethSleep(3000);
+  }
+  throw last;
+}
+
 function tab(name) {
-  for (const t of ["setup", "start"]) {
+  for (const t of ["setup", "start", "eth"]) {
     $(t + "-area").classList.toggle("hidden", t !== name);
     $("tab-" + t).classList.toggle("on", t === name);
   }
@@ -977,7 +1246,7 @@ function tab(name) {
 }
 function home() {                       // no link: set up a multisig, or start a transfer from one
   NET = NETS.nile;
-  $("subtitle").textContent = "Cüzdan kur (Nile ya da ana ağ); Nile'de gönderim başlat, sahipler imzalasın";
+  $("subtitle").textContent = "TRON (Nile ya da ana ağ) ya da Ethereum Safe (Sepolia) cüzdanı kur; Nile'de gönderim başlat";
   show("home");
   tab("setup");
   pickNet();                            // a browser that restored the radio also shows its warning
