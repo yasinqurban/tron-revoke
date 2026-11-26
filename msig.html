@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRON Çoklu İmza Onayı</title>
+<title>Çoklu İmza Onayı</title>
 <style>
   :root {
     --bg: #0f1419; --card: #1a2029; --border: #2a3340; --text: #e6edf3; --muted: #8b98a5;
@@ -50,6 +50,9 @@
   .tabs { display: flex; gap: 8px; }
   .tabs button { margin-top: 0; padding: 10px; font-size: 14px; background: #2a3340; }
   .tabs button.on { background: var(--blue); }
+  .chains { margin-bottom: 8px; }
+  .chains button { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .chains button.on { background: #2a3340; border-color: var(--blue); color: var(--text); }
   label { display: block; color: var(--muted); font-size: 13px; margin-top: 12px; }
   .field { width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--border);
            background: #0f1419; color: var(--text); font-size: 13px; font-family: inherit; }
@@ -71,10 +74,14 @@
   <div class="subtitle" id="subtitle">TRON çoklu imza (multisig) cüzdanından transfer</div>
 
   <div id="home" class="hidden">
+    <div class="tabs chains">
+      <button id="chain-tron" onclick="chain('tron')">🔺 TRON</button>
+      <button id="chain-eth" onclick="chain('eth')">🔷 Ethereum</button>
+    </div>
     <div class="tabs">
       <button id="tab-setup" onclick="tab('setup')">🔐 Cüzdan kur</button>
       <button id="tab-start" onclick="tab('start')">📤 Gönderim başlat</button>
-      <button id="tab-eth" onclick="tab('eth')">🔷 ETH Safe kur</button>
+      <button id="tab-eth" onclick="tab('eth')">🔐 Safe cüzdanı kur</button>
     </div>
 
     <div id="setup-area" class="hidden">
@@ -1237,20 +1244,27 @@ async function ethReadBack(S) {          // the Safe itself after the block: own
   throw last;
 }
 
+// Each chain's actions in button order: the chain row lights the chain, the action row shows only its
+// actions. A new chain is a row here plus its chain-<id> button, its tab-<action> buttons and areas.
+const CHAINS = { tron: ["setup", "start"], eth: ["eth"] };
+function chain(name) { tab(CHAINS[name][0]); }
 function tab(name) {
-  for (const t of ["setup", "start", "eth"]) {
+  const own = Object.keys(CHAINS).find(c => CHAINS[c].includes(name));
+  for (const c of Object.keys(CHAINS)) $("chain-" + c).classList.toggle("on", c === own);
+  for (const t of Object.values(CHAINS).flat()) {
     $(t + "-area").classList.toggle("hidden", t !== name);
     $("tab-" + t).classList.toggle("on", t === name);
+    $("tab-" + t).classList.toggle("hidden", !CHAINS[own].includes(t));
   }
   hide("open-area"); hide("copy-area");
 }
-function home() {                       // no link: set up a multisig, or start a transfer from one
+function home() {                       // no link: pick a chain, then set up a multisig or start a transfer
   NET = NETS.nile;
-  $("subtitle").textContent = "TRON (Nile ya da ana ağ) ya da Ethereum Safe (Sepolia) cüzdanı kur; Nile'de gönderim başlat";
+  $("subtitle").textContent = "TRON ve Ethereum çoklu imzalı cüzdanlar: önce zinciri, sonra işlemi seç";
   show("home");
   tab("setup");
   pickNet();                            // a browser that restored the radio also shows its warning
-  setStatus("Yeni bir çoklu imzalı cüzdan kur ya da var olan bir cüzdandan gönderim başlat.", "info");
+  setStatus("TRON'da cüzdan kur ya da var olan bir cüzdandan gönderim başlat; Ethereum'da Safe cüzdanı kur.", "info");
 }
 async function cleanSigs() {            // one signature the chain does not count leaves every later one uncounted
   let s = await signedBy(P.sigs);
