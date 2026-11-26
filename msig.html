@@ -273,16 +273,18 @@ function hexToBytes(hex) {
   return out;
 }
 function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, "0")).join(""); }
-function b64uDecode(s) {
+function b64uBytes(s) {                // base64url without padding -> bytes; anything else is a broken link
+  if (!/^[A-Za-z0-9_-]+$/.test(s || "")) throw new Error("Bağlantı bozuk.");
   s = s.replace(/-/g, "+").replace(/_/g, "/");
   while (s.length % 4) s += "=";
-  return new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0)));
+  return Uint8Array.from(atob(s), c => c.charCodeAt(0));
 }
-function b64uEncode(text) {
+function bytesB64u(bytes) {
   let bin = "";
-  new TextEncoder().encode(text).forEach(b => { bin += String.fromCharCode(b); });
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+function b64uDecode(s) { return new TextDecoder().decode(b64uBytes(s)); }
 async function sha256(bytes) { return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)); }
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 async function hexToBase58(hex) {
@@ -469,10 +471,46 @@ function jsonSaysUpdate(raw, account, owners, m, ops) {   // what the wallet rea
 function readPayload() {
   // TronLink appends "?_=1" to a fragment that has no "?" (its own adapter does): keep what comes before.
   const frag = fragment();
-  return frag ? JSON.parse(b64uDecode(frag)) : null;
+  if (!frag) return null;
+  if (!frag.startsWith("2.")) return JSON.parse(b64uDecode(frag));   // v1 (1.146.0-1.155.1): the whole JSON
+  // v2, the short link (1.155.2; operator 2026-11-26: "the link is too long", TronLink's warning printed all
+  // of it and pushed its buttons off the screen): 2.<net>.<signed bytes>[.<signature>]..., each base64url.
+  // Only what is signed travels; verify() builds the JSON from those bytes (txFromRaw).
+  const parts = frag.split(".");
+  if (parts.length < 3) throw new Error("Bağlantı bozuk.");
+  return { v: 2, net: parts[1], raw: bytesToHex(b64uBytes(parts[2])),
+           sigs: parts.slice(3).map(s => bytesToHex(b64uBytes(s))) };
+}
+function shortFragment(net, rawHex, sigs) {
+  return ["2", net, bytesB64u(hexToBytes(rawHex))].concat(sigs.map(s => bytesB64u(hexToBytes(s)))).join(".");
 }
 function linkWith(sigs) {
-  return window.location.origin + window.location.pathname + "#" + b64uEncode(JSON.stringify(Object.assign({}, P, { sigs })));
+  return window.location.origin + window.location.pathname + "#" + shortFragment(P.net, P.tx.raw_data_hex, sigs);
+}
+async function txFromRaw(hex) {
+  // The short link's transaction: every JSON field is read from the signed bytes through decodeRaw's
+  // allowlist, nothing from anywhere else; requireRebuilt then has the node turn this JSON back into bytes.
+  if (!/^(?:[0-9a-f]{2})+$/.test(hex || "")) throw new Error("İşlem baytları geçerli hex değil.");
+  const d = decodeRaw(hex), raw = pbFields(hexToBytes(hex));
+  if (d.type !== 1) throw new Error("Bu sayfa yalnızca TRX transferi imzalatır.");
+  if (d.amount > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Miktar bu sayfanın gösterebileceğinden büyük.");
+  const data = { contract: [{ parameter: { value: { amount: Number(d.amount), owner_address: d.owner, to_address: d.to },
+                                           type_url: d.url },
+                              type: "TransferContract", Permission_id: d.perm }],
+                 ref_block_bytes: bytesToHex(one(raw, 1, "bytes")), ref_block_hash: bytesToHex(one(raw, 4, "bytes")),
+                 expiration: d.expiration };
+  for (const [f, name] of [[3, "ref_block_num"], [14, "timestamp"], [18, "fee_limit"]]) {
+    const v = opt(raw, f, "int", null);
+    if (v !== null) data[name] = Number(v);
+  }
+  return { visible: false, txID: bytesToHex(await sha256(hexToBytes(hex))), raw_data: data, raw_data_hex: hex };
+}
+async function requireRebuilt(tx) {
+  // getsignweight and the broadcast send JSON, and the node rebuilds the bytes from it: it must reach the very
+  // bytes the short link carries, or a signature over this txID would count for nothing.
+  const back = await canonical(tx.raw_data);
+  if (back.raw_data_hex !== tx.raw_data_hex)
+    throw new Error("Düğüm bu işlemi aynı baytlarla kuramadı; hiçbir şey imzalanmadı.");
 }
 
 // --- Nile, asked directly ---
@@ -575,9 +613,10 @@ async function requireNotMainnet(rawHex) {
 }
 async function verify(p) {
   // What the wallet will sign must be what this page shows, on the network it names.
-  if (!p || p.v !== 1) throw new Error("Bağlantı bozuk ya da eski sürüm.");
+  if (!p || (p.v !== 1 && p.v !== 2)) throw new Error("Bağlantı bozuk ya da eski sürüm.");
   NET = p.net === "nile" ? NETS.nile : null;     // named, never looked up: no table key reaches a link
   if (!NET) throw new Error("Bu sayfa yalnızca Nile test ağında imzalatır.");
+  if (p.v === 2) p.tx = await txFromRaw(p.raw);    // the short link: its JSON is built from the signed bytes
   const tx = p.tx || {};
   if (!/^(?:[0-9a-f]{2})+$/i.test(tx.raw_data_hex || "")) throw new Error("İşlem baytları geçerli hex değil.");
   if (bytesToHex(await sha256(hexToBytes(tx.raw_data_hex))) !== tx.txID)
@@ -599,6 +638,7 @@ async function verify(p) {
   try { same = same && BigInt(v.amount) === d.amount; } catch (e) { same = false; }
   if (!same) throw new Error("Bağlantıdaki işlem metni imzalanacak baytlarla aynı değil.");
   await requireNile();
+  if (p.v === 2) await requireRebuilt(tx);
   if (d.expiration > Date.now()) {                 // an expired one is never offered for signing
     await requireNileRef(tx.raw_data_hex);
     await requireNotMainnet(tx.raw_data_hex);      // review 2026-11-24 #1: nor are bytes that would spend on mainnet
@@ -772,7 +812,7 @@ async function startTransfer() {
     const d = await verify(p);                     // the check every link gets: what is shown is what is signed
     if (d.owner !== walletHex || d.to !== toHex || d.amount !== sun)
       throw new Error("Düğümün kurduğu işlem istenenle aynı değil; link verilmedi.");
-    history.replaceState(null, "", "#" + b64uEncode(JSON.stringify(p)));
+    history.replaceState(null, "", "#" + shortFragment(p.net, p.tx.raw_data_hex, []));
     SEEN = fragment();
     $("url-field").value = window.location.href;
     await showLink(p, true);
